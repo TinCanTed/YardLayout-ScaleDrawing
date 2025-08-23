@@ -1,0 +1,34 @@
+{
+    "boundary": {
+        "front": 200.0,
+        "back": 200.0,
+        "left": 300.0,
+        "right": 300.0
+    },
+    "objects": {
+        "house": {
+            "name": "House",
+            "width": 60.0,
+            "height": 30.0,
+            "x": 60.0,
+            "y": 120.0
+        },
+        "shed": {
+            "name": "Shed",
+            "width": 30.0,
+            "height": 12.0,
+            "x": 110.0,
+            "y": 210.0
+        },
+        "well": {
+            "name": "Well",
+            "x": 180.0,
+            "y": 180.0
+        },
+        "septic": {
+            "name": "Septic Tank",
+            "x": 140.0,
+            "y": 130.0
+        }
+    }
+}
