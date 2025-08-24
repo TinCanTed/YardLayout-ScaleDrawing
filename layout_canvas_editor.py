@@ -10,6 +10,9 @@ class LayoutCanvas(tk.Frame):
         self.source_filename = source_filename
         self.modified = False
 
+        # NEW: distance-guides toggle state
+        self.show_distance_guides = False
+
         # Setup canvas
         self.canvas = tk.Canvas(self, width=850, height=650, bg="white")
         self.canvas.pack()
@@ -64,16 +67,31 @@ class LayoutCanvas(tk.Frame):
                 self.modified = True  # Mark as changed
         self.drag_data["tag"] = None
 
+        # NEW: refresh guides after movement
+        self.redraw_distance_guides()
+
+    def set_show_distance_guides(self, on: bool) -> None:
+        """Toggle showing shed-to-property distance guides (placeholder)."""
+        self.show_distance_guides = bool(on)
+        print(f"[DEBUG] Distance guides {'enabled' if on else 'disabled'} (not yet implemented)")
+        self.redraw_distance_guides()
+
+    def redraw_distance_guides(self) -> None:
+        """Placeholder: clear any prior guide elements and (later) redraw them."""
+        # convention: anything with this tag is a guide element we own
+        self.canvas.delete("distance_guide")
+        if not self.show_distance_guides:
+            return
+        # (future) compute distances & draw light dashed lines + labels, all tagged "distance_guide"
+        # e.g., line_id = self.canvas.create_line(..., fill="#BBBBBB", dash=(4,3), width=1, tags=("distance_guide",))
+        #       label_id = self.canvas.create_text(..., text="12.3 ft", font=("TkDefaultFont", 8), fill="#666666", tags=("distance_guide",))
+        pass
+
     def on_close(self):
         if self.modified:
             if messagebox.askyesno("Save Changes", "Save changes to layout?"):
                 save_layout_to_file(self.layout, self.source_filename)
         self.master.destroy()
-
-    def set_show_distance_guides(self, on: bool) -> None:
-        """Toggle showing shed-to-property distance guides (placeholder)."""
-        print(f"[DEBUG] Distance guides {'enabled' if on else 'disabled'} (not yet implemented)")
-    
 
 # You would call this from main.py like so:
 # window = tk.Tk()
