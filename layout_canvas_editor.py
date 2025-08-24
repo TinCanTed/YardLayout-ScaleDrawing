@@ -70,6 +70,11 @@ class LayoutCanvas(tk.Frame):
                 save_layout_to_file(self.layout, self.source_filename)
         self.master.destroy()
 
+    def set_show_distance_guides(self, on: bool) -> None:
+        """Toggle showing shed-to-property distance guides (placeholder)."""
+        print(f"[DEBUG] Distance guides {'enabled' if on else 'disabled'} (not yet implemented)")
+    
+
 # You would call this from main.py like so:
 # window = tk.Tk()
 # editor = LayoutCanvas(window, layout, "filename.json")
