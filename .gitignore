@@ -26,3 +26,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Build artifacts and backups
+*.exe
+*.zip
+*.pdf
+
+
