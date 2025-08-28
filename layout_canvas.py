@@ -49,9 +49,13 @@ class LayoutCanvas(tk.Frame):
         self.legend.pack(side="right", fill="y")
 
         # === Distance guides state ===
-        self.show_distance_guides = False
-        # reuse your existing scale as "px per ft"
-        self.px_per_ft = self.feet_to_pixel_ratio
+        self.show_distance_guides = getattr(self, "show_distance_guides", False)
+        self.px_per_ft = self.feet_to_pixel_ratio      # reuse your existing scale
+        self.live_guide_updates = False                # OFF by default
+        self._guide_redraw_job = None                  # throttle handle
+
+
+
 
         self.draw_grid()
         self.draw_objects()
@@ -172,6 +176,15 @@ class LayoutCanvas(tk.Frame):
         # Refresh guides after everything is drawn
         self.redraw_distance_guides()
 
+    def set_live_guide_updates(self, on: bool) -> None:
+        """Toggle live redraw of distance guides during drag."""
+        self.live_guide_updates = bool(on)
+        if self.live_guide_updates and self.show_distance_guides:
+            if self._guide_redraw_job:
+                self.after_cancel(self._guide_redraw_job)
+                self._guide_redraw_job = None
+            self._guide_redraw_job = self.after(0, self.redraw_distance_guides)   
+
     def draw_legend(self):
         self.legend.delete("all")
         items = [
@@ -209,6 +222,13 @@ class LayoutCanvas(tk.Frame):
             dy = event.y - self.drag_data["offset_y"] - bbox[1]
             for item in items:
                 self.canvas.move(item, dx, dy)
+
+        # Live redraw (throttled) if enabled
+        if self.live_guide_updates and self.show_distance_guides:
+            if self._guide_redraw_job:
+                self.after_cancel(self._guide_redraw_job)
+        # ~30 fps (33ms). Adjust if needed.
+        self._guide_redraw_job = self.after(33, self.redraw_distance_guides)
 
     def on_drag_release(self, event):
         tag = self.drag_data["tag"]
@@ -253,12 +273,21 @@ class LayoutCanvas(tk.Frame):
         old_y = round(obj.y, 2) if obj.y is not None else None
 
         if (old_x, old_y) == (new_x, new_y):
+            # NEW: finalize guides even if nothing moved (optional)
+            if self._guide_redraw_job:
+                self.after_cancel(self._guide_redraw_job)
+                self._guide_redraw_job = None
+            self.redraw_distance_guides()
             self.drag_data["tag"] = None
             return
 
         self.layout.update_object_position(name, new_x, new_y)
         print(f"[DEBUG] Updated {tag} to unflipped x={new_x}, y={new_y}")
         save_layout_to_file(self.layout, self.filename)
+        
+        if hasattr(self, "_guide_redraw_job") and self._guide_redraw_job:
+            self.after_cancel(self._guide_redraw_job)
+            self._guide_redraw_job = None
         self.redraw_distance_guides()
 
         self.drag_data["tag"] = None

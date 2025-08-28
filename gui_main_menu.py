@@ -12,6 +12,71 @@ from file_handler import load_layout_from_file, save_layout_to_file
 from layout_canvas import LayoutCanvas
 from print_export import export_to_pdf
 
+# --- Robust error logging helpers (single source of truth) ---
+import datetime
+import traceback 
+import tempfile
+
+LOG_PATH = os.path.join(tempfile.gettempdir(), "ScaleDrawing_error_log.txt")
+
+def _write_log(title, exc_type=None, exc=None, tb=None, extra=None):
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"\n=== {title} === {datetime.datetime.now().isoformat()} ===\n")
+            if extra:
+                f.write(extra + "\n")
+            if exc_type:
+                traceback.print_exception(exc_type, exc, tb, file=f)
+    except Exception as e:
+        print(f"[ERR] Could not write log: {e}")
+
+def _open_log_in_notepad():
+    try:
+        os.startfile(LOG_PATH)  # Windows default handler
+        return
+    except Exception:
+        pass
+    try:
+        subprocess.Popen(["notepad.exe", LOG_PATH])  # explicit fallback
+    except Exception as e:
+        print(f"[ERR] Could not open Notepad: {e}")
+        print(f"[INFO] Log is at: {LOG_PATH}")
+
+def install_global_excepthook():
+    def _hook(exc_type, exc, tb):
+        _write_log("UNHANDLED EXCEPTION", exc_type, exc, tb)
+        try:
+            tmp = tk.Tk() 
+            tmp.withdraw()
+            messagebox.showerror(
+                "Unexpected Error",
+                f"An error was logged to:\n{LOG_PATH}\n\nAttempting to open it now."
+            )
+        except Exception:
+            pass
+        finally:
+            _open_log_in_notepad()
+            try:
+                tmp.destroy()
+            except Exception:
+                pass
+    sys.excepthook = _hook
+
+def install_tk_report_hook(root: tk.Tk):
+    def _report_callback_exception(exc_type, exc, tb):
+        _write_log("TK CALLBACK EXCEPTION", exc_type, exc, tb)
+        try:
+            messagebox.showerror(
+                "Unexpected Error",
+                f"An error was logged to:\n{LOG_PATH}\n\nAttempting to open it now."
+            )
+        except Exception:
+            pass
+        finally:
+            _open_log_in_notepad()
+    root.report_callback_exception = _report_callback_exception
+# --- end helpers ---
+
 # ---- App version (safe in frozen EXE) ----
 APP_VERSION = "1.0.0"  # set your release version here
 
@@ -77,23 +142,57 @@ def open_editor_window(root, layout, file_path):
     # Create the editor frame (LayoutCanvas) with hard error surfacing
     try:
         editor = LayoutCanvas(win, layout, file_path)
-    except Exception as e:
-        try:
-            import traceback
-            tb = traceback.format_exc()
-        except Exception:
-            tb = ""
+    except Exception:
+        import sys
+        import traceback
+        _write_log("Editor Error (LayoutCanvas)", *sys.exc_info())
         messagebox.showerror(
             "Editor Error (LayoutCanvas)",
-            f"{e}\n\nDetails:\n{tb}"
+            f"An error was logged to:\n{LOG_PATH}\n\nOpening it now."
         )
+        _open_log_in_notepad()
         try:
             win.destroy()
         except Exception:
             pass
         return None
-
     editor.pack(fill="both", expand=True)
+
+    # --- View menu with toggles ---
+    menubar = tk.Menu(win)
+    view_menu = tk.Menu(menubar, tearoff=0)
+
+    # Checkbutton states
+    show_guides_var = tk.BooleanVar(value=True)    # show guides on startup
+    live_guides_var = tk.BooleanVar(value=False)   # live updates off by default
+
+    # Callbacks that talk to the editor
+    def _toggle_show_guides():
+        editor.set_show_distance_guides(show_guides_var.get())
+
+    def _toggle_live_guides():
+        editor.set_live_guide_updates(live_guides_var.get())
+
+    view_menu.add_checkbutton(
+        label="Show distance guides",
+        variable=show_guides_var,
+        command=_toggle_show_guides
+    )
+    view_menu.add_checkbutton(
+        label="Live updates while dragging",
+        variable=live_guides_var,
+        command=_toggle_live_guides
+    )
+
+    menubar.add_cascade(label="View", menu=view_menu)
+    win.config(menu=menubar)
+
+    # Ensure guides start ON (matches your previous behavior)
+    win.after(0, lambda: (
+        show_guides_var.set(True),
+        editor.set_show_distance_guides(True)
+    ))
+    
 
     # Show & raise the window BEFORE withdrawing the menu
     try:
@@ -559,52 +658,81 @@ current_layout_data: Optional[LayoutData] = None
 
 # ---------- Button handlers ----------
 def on_create_new():
+    """Create a new layout, save it, export PDF, and open the editor (with logging)."""
     global current_layout_data, current_file_path
-    layout = prompt_for_new_layout()
+
+    # 1) Collect layout info
+    try:
+        layout = prompt_for_new_layout()
+    except Exception:
+        import sys
+        _write_log("Create New – prompt_for_new_layout error", *sys.exc_info())
+        messagebox.showerror("Create New", f"Problem opening the new-layout dialog.\nSee log at:\n{LOG_PATH}")
+        _open_log_in_notepad()
+        return
+
     if layout is None:
         return  # user cancelled
 
-    path = filedialog.asksaveasfilename(
-        title="Save New Layout",
-        initialdir=str(get_layouts_dir()),
-        defaultextension=".json",
-        filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
-    )
+    # 2) Where to save
+    try:
+        path = filedialog.asksaveasfilename(
+            title="Save New Layout",
+            initialdir=str(get_layouts_dir()),
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+    except Exception:
+        import sys
+        _write_log("Create New – asksaveasfilename error", *sys.exc_info())
+        messagebox.showerror("Create New", f"Problem opening the Save dialog.\nSee log at:\n{LOG_PATH}")
+        _open_log_in_notepad()
+        return
+
     if not path:
         return  # user cancelled
 
+    # 3) Save JSON + update app state
     try:
         save_layout_to_file(layout, path)  # write JSON to disk
+    except Exception:
+        import sys
+        _write_log("Create New – save_layout_to_file error", *sys.exc_info())
+        messagebox.showerror("Save Error", f"Failed to save layout.\nSee log at:\n{LOG_PATH}")
+        _open_log_in_notepad()
+        return
 
-        # Update app state
-        current_layout_data = layout
-        current_file_path = path
+    current_layout_data = layout
+    current_file_path = path
 
-        # --- Auto-generate PDF into print/ ---
-        try:
-            out_pdf = pdf_path_for_layout(current_file_path)
-            export_to_pdf(current_layout_data, str(out_pdf))  # adjust if your signature differs
-        except Exception as e:
-            # Non-fatal: JSON saved OK; just warn about PDF
-            messagebox.showwarning("PDF Export",
-                                   f"Saved layout.json but failed to create PDF:\n{e}")
+    # 4) Auto-generate PDF (non-fatal if it fails)
+    try:
+        out_pdf = pdf_path_for_layout(current_file_path)
+        export_to_pdf(current_layout_data, str(out_pdf))  # adjust if your signature differs
+    except Exception:
+        import sys
+        _write_log("Create New – PDF export error", *sys.exc_info())
+        messagebox.showwarning(
+            "PDF Export",
+            f"Saved layout.json but failed to create PDF.\nSee log at:\n{LOG_PATH}"
+        )
+        _open_log_in_notepad()
+
+    # 5) Open the editor window
+    try:
         win = open_editor_window(root, current_layout_data, current_file_path)
         if win is None:
             return
-
-        try:
-            win.update()
-            win.deiconify()
-            win.lift()
-            win.focus_force()
-        except Exception:
-            pass
-
+        win.update()
+        win.deiconify()
+        win.lift()
+        win.focus_force()
         root.wait_window(win)
-
-    except Exception as e:
-        messagebox.showerror("Save Error", f"Failed to save layout:\n{e}")
-
+    except Exception:
+        import sys
+        _write_log("Create New – editor window error", *sys.exc_info())
+        messagebox.showerror("Editor", f"Could not open the editor window.\nSee log at:\n{LOG_PATH}")
+        _open_log_in_notepad()
 def on_open_existing():
     global current_layout_data, current_file_path
     path = filedialog.askopenfilename(
@@ -659,8 +787,11 @@ def on_edit_layout():
             layout, file_path = result
         else:
             layout, file_path = result, path
-    except Exception as e:
-        messagebox.showerror("Load Error", f"Failed to load layout:\n{e}")
+    except Exception:
+        import sys
+        _write_log("Load Error in on_edit_layout", *sys.exc_info())
+        messagebox.showerror("Load Error", f"Failed to load layout.\nSee log at:\n{LOG_PATH}")
+        _open_log_in_notepad()
         return
 
     # Open the same form, pre-filled with the chosen layout
@@ -671,8 +802,11 @@ def on_edit_layout():
     # Save changes back to the chosen file
     try:
         save_layout_to_file(updated, file_path)
-    except Exception as e:
-        messagebox.showerror("Save Error", f"Failed to save layout:\n{e}")
+    except Exception:
+        import sys
+        _write_log("Save Error in on_edit_layout", *sys.exc_info())
+        messagebox.showerror("Save Error", f"Failed to save layout.\nSee log at:\n{LOG_PATH}")
+        _open_log_in_notepad()
         return
 
     # Update app state
@@ -682,11 +816,13 @@ def on_edit_layout():
     # --- Auto-generate PDF into print/ ---
     try:
         out_pdf = pdf_path_for_layout(current_file_path)
-        export_to_pdf(current_layout_data, str(out_pdf))  # adjust if your signature differs
-    except Exception as e:
-        # Non-fatal: JSON saved OK; just warn about PDF
+        export_to_pdf(current_layout_data, str(out_pdf))
+    except Exception:
+        import sys
+        _write_log("PDF Export Error in on_edit_layout", *sys.exc_info())
         messagebox.showwarning("PDF Export",
-                                f"Saved layout.json but failed to create PDF:\n{e}")
+                               f"Saved layout.json but failed to create PDF.\nSee log at:\n{LOG_PATH}")
+        _open_log_in_notepad()
 
     # Open the editor window with the updated data
     win = open_editor_window(root, current_layout_data, current_file_path)
@@ -699,10 +835,11 @@ def on_edit_layout():
         win.lift()
         win.focus_force()
     except Exception:
-        pass
+        import sys
+        _write_log("Editor Window Error in on_edit_layout", *sys.exc_info())
+        _open_log_in_notepad()
 
     root.wait_window(win)
-
 def open_pdf(path: str) -> None:
     try:
         if os.name == "nt":                 # Windows
@@ -730,8 +867,20 @@ def on_exit():
     root.destroy()
 
 # ---------- Main window ----------
-ensure_app_dirs()       # make sure layouts/ and print/ exist
+ensure_app_dirs()  # make sure layouts/ and print/ exist
+
+# 1) Install the global hook BEFORE creating Tk (catches non-Tk exceptions)
+print("[DBG] installing excepthooks … LOG_PATH:", LOG_PATH)
+install_global_excepthook()
+
+# 2) Create the one-and-only Tk root
 root = tk.Tk()
+
+# 3) Install the Tk callback hook on THIS root (catches Tk event errors)
+install_tk_report_hook(root)
+print("[DBG] excepthooks installed")
+
+# --- your existing UI setup ---
 apply_ttk_styles(root)  # apply shared fonts/styles once
 
 root.title(f"Scale Drawing Menu v{APP_VERSION}")
@@ -742,14 +891,13 @@ try:
 except Exception:
     pass
 
-MENU_FONT_BTN   = APP_FONT_BASE
+MENU_FONT_BTN = APP_FONT_BASE
 
 ttk.Label(root, text="🧰 Scale Drawing Program", style="App.Header.TLabel").pack(pady=20)
 tk.Button(root, text="🆕  Create New Layout",    width=32, font=MENU_FONT_BTN, command=on_create_new).pack(pady=6)
 tk.Button(root, text="📂  Open Existing Layout", width=32, font=MENU_FONT_BTN, command=on_open_existing).pack(pady=6)
 tk.Button(root, text="✏️  Edit Layout",          width=32, font=MENU_FONT_BTN, command=on_edit_layout).pack(pady=6)
-tk.Button(root, text="🖨️  Print PDF",        width=32, font=MENU_FONT_BTN, command=on_print_pdf).pack(pady=6)
+tk.Button(root, text="🖨️  Print PDF",            width=32, font=MENU_FONT_BTN, command=on_print_pdf).pack(pady=6)
 tk.Button(root, text="❌  Exit",                  width=32, font=MENU_FONT_BTN, command=on_exit).pack(pady=18)
 
 root.mainloop()
-
