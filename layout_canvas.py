@@ -62,7 +62,7 @@ class LayoutCanvas(tk.Frame):
         self.draw_legend()
         # draw distance guides
         self.after(0, lambda: self.set_show_distance_guides(True))
-
+        self.on_layout_changed = None  # callback hook set by the window
 
         self.canvas.tag_bind("draggable", "<ButtonPress-1>", self.on_drag_start)
         self.canvas.tag_bind("draggable", "<B1-Motion>", self.on_drag_move)
@@ -227,8 +227,8 @@ class LayoutCanvas(tk.Frame):
         if self.live_guide_updates and self.show_distance_guides:
             if self._guide_redraw_job:
                 self.after_cancel(self._guide_redraw_job)
-        # ~30 fps (33ms). Adjust if needed.
-        self._guide_redraw_job = self.after(33, self.redraw_distance_guides)
+            # ~30 fps (33ms). Adjust if needed.
+            self._guide_redraw_job = self.after(33, self.redraw_distance_guides)
 
     def on_drag_release(self, event):
         tag = self.drag_data["tag"]
@@ -284,6 +284,12 @@ class LayoutCanvas(tk.Frame):
         self.layout.update_object_position(name, new_x, new_y)
         print(f"[DEBUG] Updated {tag} to unflipped x={new_x}, y={new_y}")
         save_layout_to_file(self.layout, self.filename)
+
+        if callable(getattr(self, "on_layout_changed", None)):
+            try:
+                self.on_layout_changed()
+            except Exception as e:
+                print("[WARN] on_layout_changed callback failed:", e)
         
         if hasattr(self, "_guide_redraw_job") and self._guide_redraw_job:
             self.after_cancel(self._guide_redraw_job)
