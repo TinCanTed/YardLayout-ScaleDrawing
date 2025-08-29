@@ -142,6 +142,17 @@ def open_editor_window(root, layout, file_path):
     # Create the editor frame (LayoutCanvas) with hard error surfacing
     try:
         editor = LayoutCanvas(win, layout, file_path)
+        # NEW: hook PDF regeneration after edits
+        def _regenerate_pdf_for_current():
+            try:
+                out_pdf = pdf_path_for_layout(file_path)
+                export_to_pdf(layout, str(out_pdf), show_distance_guides=True)
+                print(f"[INFO] PDF regenerated at {out_pdf}")
+            except Exception as e:
+                print("[WARN] PDF regeneration failed:", e)
+
+        editor.on_layout_changed = _regenerate_pdf_for_current
+
     except Exception:
         import sys
         import traceback
@@ -156,7 +167,48 @@ def open_editor_window(root, layout, file_path):
         except Exception:
             pass
         return None
+
     editor.pack(fill="both", expand=True)
+
+    def _regenerate_pdf_for_current():
+        out_pdf = pdf_path_for_layout(file_path)
+        export_to_pdf(layout, str(out_pdf), show_distance_guides=True)
+    editor.on_layout_changed = _regenerate_pdf_for_current
+    
+
+    # --- View menu with toggles ---
+    menubar = tk.Menu(win)
+    view_menu = tk.Menu(menubar, tearoff=0)
+
+    show_guides_var = tk.BooleanVar(value=True)    # show guides on startup
+    live_guides_var = tk.BooleanVar(value=False)   # live updates off by default
+
+    def _toggle_show_guides():
+        editor.set_show_distance_guides(show_guides_var.get())
+
+    def _toggle_live_guides():
+        editor.set_live_guide_updates(live_guides_var.get())
+
+    view_menu.add_checkbutton(
+        label="Show distance guides",
+        variable=show_guides_var,
+        command=_toggle_show_guides
+    )
+    view_menu.add_checkbutton(
+        label="Live updates while dragging",
+        variable=live_guides_var,
+        command=_toggle_live_guides
+    )
+
+    menubar.add_cascade(label="View", menu=view_menu)
+    win.config(menu=menubar)
+
+    # Ensure guides start ON (matches your current behavior)
+    win.after(0, lambda: (
+        show_guides_var.set(True),
+        editor.set_show_distance_guides(True)
+    ))
+
 
     # --- View menu with toggles ---
     menubar = tk.Menu(win)

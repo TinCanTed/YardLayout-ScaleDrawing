@@ -31,4 +31,6 @@ Thumbs.db
 *.zip
 *.pdf
 
-
+# Files to ignore
+KERRI_README.txt
+layout_canvas_editor.bak.py
