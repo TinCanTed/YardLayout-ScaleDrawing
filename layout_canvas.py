@@ -334,11 +334,13 @@ class LayoutCanvas(tk.Frame):
 
     def zoom_in(self, _event=None):
         self.feet_to_pixel_ratio *= 1.1
+        self.px_per_ft = self.feet_to_pixel_ratio   # keep px/ft in sync
         self.update_canvas_dimensions()
         self.draw_objects()
 
     def zoom_out(self, _event=None):
         self.feet_to_pixel_ratio /= 1.1
+        self.px_per_ft = self.feet_to_pixel_ratio   # keep px/ft in sync
         self.update_canvas_dimensions()
         self.draw_objects()
 
@@ -369,6 +371,38 @@ class LayoutCanvas(tk.Frame):
         y2 = MARGIN_PX + self.feet_to_pixels(self.layout.left)
         return (x1, y1, x2, y2)
 
+    def _bbox_union(self, item_ids):
+        """Union bbox for a list of canvas items."""
+        boxes = [self.canvas.bbox(i) for i in item_ids if self.canvas.bbox(i)]
+        if not boxes:
+            return None
+        x1 = min(b[0] for b in boxes)
+        y1 = min(b[1] for b in boxes)
+        x2 = max(b[2] for b in boxes)
+        y2 = max(b[3] for b in boxes)
+        return (x1, y1, x2, y2)
+
+    def _shed_body_bbox_px(self):
+        """BBox of the shed rectangle(s) only (exclude rotate glyph / labels)."""
+        items = self.canvas.find_withtag("shed")
+        rects = [i for i in items if self.canvas.type(i) == "rectangle"]
+        return self._bbox_union(rects)
+
+    def _shed_distances_ft(self):
+        """Return exact (left_ft, right_ft, front_ft, back_ft) from the layout model."""
+        s = self.layout.shed
+        if not s or s.x is None or s.y is None or s.width is None or s.height is None:
+            return None
+        # Model meaning (based on your form):
+        # x = distance from LEFT property line to shed LEFT edge
+        # y = distance from FRONT property line (top) to shed FRONT edge
+        left_ft  = max(0.0, s.x)
+        right_ft = max(0.0, self.layout.front - (s.x + s.width))
+        front_ft = max(0.0, s.y)
+        back_ft  = max(0.0, self.layout.left - (s.y + s.height))
+        return (left_ft, right_ft, front_ft, back_ft)
+
+
     def set_show_distance_guides(self, on: bool) -> None:
         """Toggle showing shed→property distance guides."""
         self.show_distance_guides = bool(on)
@@ -379,71 +413,73 @@ class LayoutCanvas(tk.Frame):
         # Clear previous guides
         self.canvas.delete("distance_guide")
 
-        if not self.show_distance_guides:
+        if not getattr(self, "show_distance_guides", False):
             return
 
-        # Shed bbox — requires shed items carry the "shed" tag
-        shed_bb = self._find_bbox_px("shed")
+        # Need the shed and the property bounds (in pixels) to place the lines
+        # Use shed RECTANGLE bbox only (exclude rotate glyph / labels)
+        shed_bb = self._shed_body_bbox_px() or self._find_bbox_px("shed")
         if not shed_bb:
             return
         sx1, sy1, sx2, sy2 = shed_bb
         shed_cx = (sx1 + sx2) / 2
         shed_cy = (sy1 + sy2) / 2
 
-        # Property bbox: prefer tagged rect, else compute from layout
-        prop_bb = self._find_bbox_px(["property", "boundary"])
-        if not prop_bb:
-            prop_bb = self._property_bbox_from_layout()
+        prop_bb = self._find_bbox_px(["property", "boundary"]) or self._property_bbox_from_layout()
         px1, py1, px2, py2 = prop_bb
 
-        # Edge-to-edge distances (px; clamp ≥ 0)
-        d_left_px  = max(0, sx1 - px1)
-        d_right_px = max(0, px2 - sx2)
-        d_front_px = max(0, sy1 - py1)  # "front" = top edge
-        d_back_px  = max(0, py2 - sy2)  # "back"  = bottom edge
+        # Exact distances in FEET for labels
+        if self.live_guide_updates:
+            # derive from current pixel geometry (top=back, bottom=front)
+            left_ft  = self._feet(max(0, sx1 - px1))
+            right_ft = self._feet(max(0, px2 - sx2))
+            back_ft  = self._feet(max(0, sy1 - py1))   # top segment
+            front_ft = self._feet(max(0, py2 - sy2))   # bottom segment
+        else:
+            d = self._shed_distances_ft()
+            if not d:
+                return
+            left_ft, right_ft, front_ft, back_ft = d
 
-        # Draw helpers
-        def draw_h_guide(x_start, x_end, y, dist_px):
+        # Helpers: draw lines in px; label with ft
+        def draw_h_guide(x_start, x_end, y, dist_ft: float):
             line_id = self.canvas.create_line(
-                x_start, y, x_end, y,
-                dash=(4, 3), width=1, fill="#BFBFBF",
+                x_start, y, x_end, y, dash=(4, 3), width=1, fill="#BFBFBF",
                 tags=("distance_guide",)
             )
             self.canvas.tag_lower(line_id)
-            if dist_px > 0:
+            if dist_ft > 0:
                 midx = (x_start + x_end) / 2
                 self.canvas.create_text(
-                    midx, y - 8,
-                    text=f"{self._feet(dist_px):.1f} ft",
-                    font=("TkDefaultFont", 8),
-                    fill="#666666",
-                    anchor="s",
+                    midx, y - 8, text=f"{dist_ft:.1f} ft",
+                    font=("TkDefaultFont", 8), fill="#666666", anchor="s",
                     tags=("distance_guide",)
                 )
 
-        def draw_v_guide(x, y_start, y_end, dist_px):
+        def draw_v_guide(x, y_start, y_end, dist_ft: float):
             line_id = self.canvas.create_line(
-                x, y_start, x, y_end,
-                dash=(4, 3), width=1, fill="#BFBFBF",
+                x, y_start, x, y_end, dash=(4, 3), width=1, fill="#BFBFBF",
                 tags=("distance_guide",)
             )
             self.canvas.tag_lower(line_id)
-            if dist_px > 0:
+            if dist_ft > 0:
                 midy = (y_start + y_end) / 2
                 self.canvas.create_text(
-                    x + 8, midy,
-                    text=f"{self._feet(dist_px):.1f} ft",
-                    font=("TkDefaultFont", 8),
-                    fill="#666666",
-                    anchor="w",
+                    x + 8, midy, text=f"{dist_ft:.1f} ft",
+                    font=("TkDefaultFont", 8), fill="#666666", anchor="w",
                     tags=("distance_guide",)
                 )
 
-        # Left / Right / Front / Back guides
-        draw_h_guide(px1, sx1, shed_cy, d_left_px)
-        draw_h_guide(sx2, px2, shed_cy, d_right_px)
-        draw_v_guide(shed_cx, py1, sy1, d_front_px)
-        draw_v_guide(shed_cx, sy2, py2, d_back_px)   
+        # Horizontal guides: left / right (unchanged)
+        draw_h_guide(px1, sx1, shed_cy, left_ft)
+        draw_h_guide(sx2, px2, shed_cy, right_ft)
+
+        # Vertical guides: SWAP which labels go top vs bottom
+        # Top segment (py1..sy1) should show BACK
+        draw_v_guide(shed_cx, py1, sy1, back_ft)
+        # Bottom segment (sy2..py2) should show FRONT
+        draw_v_guide(shed_cx, sy2, py2, front_ft)
+
 
     def rotate_shed_by_click(self, _event):
         self.rotate_shed(_event)
