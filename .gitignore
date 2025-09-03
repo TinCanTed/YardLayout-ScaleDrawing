@@ -26,3 +26,12 @@ Thumbs.db
 *.swp
 *.swo
 
+# Ignore build outputs / exports
+print/
+ScaleDrawing_Setup_*.zip
+project_backup_*.zip
+setup_gui_scale_drawing*.exe
+*.bak
+*.bak.*
+
+
