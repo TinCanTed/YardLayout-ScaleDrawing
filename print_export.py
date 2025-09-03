@@ -7,51 +7,57 @@ import os
 PRINT_DIR = os.path.expanduser("~/gui_scale_drawing/print")
 os.makedirs(PRINT_DIR, exist_ok=True)
 
-def export_to_pdf(layout, filename, show_distance_guides: bool = True):
+
+def export_to_pdf(layout, filename):
     page_width, page_height = landscape(letter)  # 11 x 8.5 inches landscape
     margin = 0.5 * inch
     legend_height = 60  # space reserved at the bottom for the legend
-    yard_width_ft = layout.front  # Left + Right boundary
-    yard_height_ft = layout.left  # Front + Back boundary
 
-    # Adjust scale to fit within page dimensions (minus margins and legend space)
+    # In this project: width (X) == layout.front, height (Y) == layout.left
+    yard_width_ft = layout.front     # Left <-> Right span
+    yard_height_ft = layout.left     # Back (top) <-> Front (bottom) span
+
+    # Scale to fit (respect margins and legend space)
     scale_x = (page_width - 2 * margin) / yard_width_ft
     scale_y = (page_height - 2 * margin - legend_height) / yard_height_ft
     scale = min(scale_x, scale_y)
 
-    # helpers: feet -> points (X is simple; Y is top-origin to match Tk canvas)
+    # Coordinate helpers (origin top-left of page area, to match LayoutCanvas)
     def ft_to_pt_x(x_ft: float) -> float:
         return margin + x_ft * scale
 
-    def ft_to_pt_y(y_ft: float) -> float:
-        # origin at top: y=0 is top/front; y increases downward
-        return page_height - margin - y_ft * scale
+    def ft_to_pt_y(y_ft_from_top: float) -> float:
+        # Convert a distance in feet measured DOWN from the yard's top edge
+        # to page points (origin at top of page content area).
+        return page_height - margin - y_ft_from_top * scale
 
-    # origin (top-left of the yard rectangle)
-    layout_origin_x = ft_to_pt_x(0)
+    # Yard's top-left in page coords; rect drawn downward (positive height)
+    layout_origin_x = margin
     layout_origin_y = ft_to_pt_y(yard_height_ft)
 
     c = canvas.Canvas(filename, pagesize=(page_width, page_height))
     c.setLineWidth(0.5)
 
-    # Property boundary box
+    # Draw yard boundary
     c.rect(layout_origin_x, layout_origin_y, yard_width_ft * scale, yard_height_ft * scale)
 
-    # Gridlines
+    # Gridlines & axes labels
     def draw_pdf_grid():
         spacing_ft = 10
-        # verticals
+        # Vertical lines + top labels
         for ft in range(0, int(yard_width_ft) + 1, spacing_ft):
             x = ft_to_pt_x(ft)
             c.setStrokeColor(colors.lightgrey)
-            top = ft_to_pt_y(0)               # top of yard
-            bottom = ft_to_pt_y(yard_height_ft)  # bottom of yard
+            top = ft_to_pt_y(0)  # top edge of yard
+            bottom = ft_to_pt_y(yard_height_ft)  # bottom edge of yard
             c.line(x, top, x, bottom)
+
             c.setFillColor(colors.black)
             c.setFont("Helvetica", 6)
-            label_y = ft_to_pt_y(0) + 5
+            label_y = ft_to_pt_y(0) + 5  # just inside the yard area
             c.drawCentredString(x, label_y, str(ft))
-        # horizontals
+
+        # Horizontal lines + left labels
         for ft in range(0, int(yard_height_ft) + 1, spacing_ft):
             y = ft_to_pt_y(ft)
             c.setStrokeColor(colors.lightgrey)
@@ -62,101 +68,208 @@ def export_to_pdf(layout, filename, show_distance_guides: bool = True):
 
     draw_pdf_grid()
 
-    # Draw layout objects
+    # ==== Draw layout objects ====
     def draw_rect(obj, color):
-        if obj is None or obj.x is None or obj.y is None:
+        # Skip if object or required fields are missing
+        if not obj or any(getattr(obj, k, None) is None for k in ("x", "y", "width", "height", "name")):
             return
+
         x = ft_to_pt_x(obj.x)
-        y = ft_to_pt_y(layout.left - obj.y - obj.height)
+        # obj.y is distance from FRONT (bottom) boundary in feet.
+        # For the rectangle, its TOP edge (distance from top boundary) is:
+        #   top_ft = yard_height_ft - (obj.y + obj.height)
+        y = ft_to_pt_y(yard_height_ft - obj.y - obj.height)
         w = obj.width * scale
         h = obj.height * scale
+
         c.setFillColor(color)
-        c.rect(x, y, w, -h, fill=1)  # draw upward instead of downward
+        # Draw upward (negative height) to keep inside the yard box math consistent
+        c.rect(x, y, w, -h, fill=1)
+
         c.setFillColorRGB(1, 1, 1)
         c.setFont("Helvetica-Bold", 8)
-        c.drawCentredString(x + w / 2, y - h / 2, obj.name or "")
+        c.drawCentredString(x + w / 2, y - h / 2, obj.name)
 
     def draw_point(obj, color):
-        if obj is None or obj.x is None or obj.y is None:
-            return
+        if not obj or getattr(obj, "x", None) is None or getattr(obj, "y", None) is None or getattr(obj, "name", None) is None:
+            return 
+
         x = ft_to_pt_x(obj.x)
-        y = ft_to_pt_y(layout.left - obj.y)
+        y = ft_to_pt_y(yard_height_ft - obj.y)
         r = 5
         c.setFillColor(color)
         c.circle(x, y, r, fill=1)
         c.setFillColorRGB(0, 0, 0)
-        c.drawString(x + 6, y - 4, obj.name or "")
+        c.drawString(x + 6, y - 4, obj.name)
 
+    # Objects
     draw_rect(layout.house, colors.Color(0.2, 0.5, 0.9))     # Blue
-    draw_rect(layout.shed, colors.Color(0.5, 0.3, 0.1))      # Brown
-    draw_point(layout.well, colors.Color(0, 0.7, 0))         # Green
+    draw_rect(layout.shed,  colors.Color(0.5, 0.3, 0.1))     # Brown
+    draw_point(layout.well,   colors.Color(0, 0.7, 0))       # Green
     draw_point(layout.septic, colors.Color(0.7, 0, 0))       # Red
 
-    # --- Distance guides (optional) ---
-    if show_distance_guides and layout.shed and layout.shed.x is not None and layout.shed.y is not None:
-        # property bounds in points
-        prop_left   = layout_origin_x
-        prop_top    = layout_origin_y
-        prop_right  = layout_origin_x + yard_width_ft * scale
-        prop_bottom = ft_to_pt_y(0)  # equal to layout_origin_y + yard_height_ft * scale
+    # ==== Distance label helpers (NEAREST boundary edges) ====
 
-        # shed bounds in points
-        sx1 = ft_to_pt_x(layout.shed.x)
-        sy1 = ft_to_pt_y(layout.left - layout.shed.y - layout.shed.height)
-        sx2 = sx1 + layout.shed.width * scale
-        sy2 = sy1 - layout.shed.height * scale
-        scx = (sx1 + sx2) / 2.0
-        scy = (sy1 + sy2) / 2.0
+    # Arrowhead helper
+    def draw_arrowhead(x, y, dx, dy, size=6):
+        """
+        Draw a small V-shaped arrowhead at (x,y) pointing along vector (dx,dy).
+        """
+        length = (dx * dx + dy * dy) ** 0.5 or 1.0
+        ux, uy = dx / length, dy / length
+        # perpendicular
+        px, py = -uy, ux
+        # two small lines to form a V
+        c.line(x, y, x - ux * size + px * (size * 0.6), y - uy * size + py * (size * 0.6))
+        c.line(x, y, x - ux * size - px * (size * 0.6), y - uy * size - py * (size * 0.6))
 
-        # distances (points)
-        d_left_pt  = max(0.0, sx1 - prop_left)
-        d_right_pt = max(0.0, prop_right - sx2)
-        d_front_pt = max(0.0, sy1 - prop_top)      # front = top edge
-        d_back_pt  = max(0.0, prop_bottom - sy2)   # back  = bottom edge
+    def draw_dim_line(x1, y1, x2, y2, label, outside_offset=12, label_offset=2):
+        """
+        Draws a dimension line with arrowheads from (x1,y1) to (x2,y2), places `label`
+        near the center. If line is horizontal, it nudges the line outward by outside_offset
+        perpendicular to the line (same for vertical).
+        """
+        if abs(y1 - y2) < 1e-6:
+            # Horizontal line – offset outward vertically
+            y1o = y1 - outside_offset
+            y2o = y2 - outside_offset
+            c.setStrokeColor(colors.darkgray)
+            c.line(x1, y1o, x2, y2o)
+            # Arrowheads
+            draw_arrowhead(x1, y1o, x2 - x1, 0)
+            draw_arrowhead(x2, y2o, x1 - x2, 0)
+            # Label
+            cx = (x1 + x2) / 2
+            c.setFillColor(colors.black)
+            c.setFont("Helvetica", 8)
+            c.drawCentredString(cx, y1o - label_offset, label)
+        elif abs(x1 - x2) < 1e-6:
+            # Vertical line – offset outward horizontally
+            x1o = x1 - outside_offset
+            x2o = x2 - outside_offset
+            c.setStrokeColor(colors.darkgray)
+            c.line(x1o, y1, x2o, y2)
+            # Arrowheads
+            draw_arrowhead(x1o, y1, 0, y2 - y1)
+            draw_arrowhead(x2o, y2, 0, y1 - y2)
+            # Label (rotated)
+            cy = (y1 + y2) / 2
+            c.saveState()
+            c.translate(x1o - label_offset, cy)
+            c.rotate(90)
+            c.setFillColor(colors.black)
+            c.setFont("Helvetica", 8)
+            c.drawCentredString(0, 0, label)
+            c.restoreState()
+        else:
+            # Diagonal (shouldn't occur in our use) – just draw straight
+            c.setStrokeColor(colors.darkgray)
+            c.line(x1, y1, x2, y2)
 
-        def pt_to_ft(pts: float) -> float:
-            return pts / scale  # scale is points-per-foot
+    # Compute nearest-edge distances for a rectangle-shaped object
+    def rect_nearest_distances_ft(obj):
+        # Horizontal distances
+        left_ft  = obj.x
+        right_ft = yard_width_ft - (obj.x + obj.width)
+        # Vertical distances: obj.y is distance from FRONT (bottom)
+        front_ft = obj.y
+        back_ft  = yard_height_ft - (obj.y + obj.height)
+        return left_ft, right_ft, back_ft, front_ft
 
-        # style
-        c.setDash(4, 3)
-        c.setLineWidth(0.7)
-        c.setStrokeGray(0.7)
-        c.setFillGray(0.4)
-        c.setFont("Helvetica", 8)
+    # Draw measurement lines for a rectangular object to the nearest yard edges
+    def draw_rect_measurements(obj, side_labels_prefix=""):
+        # Must have full rectangle data
+        if (not obj or any(getattr(obj, k, None) is None for k in ("x","y","width","height"))):
+            return
+        # Distances in feet (nearest edges)
+        left_ft, right_ft, back_ft, front_ft = rect_nearest_distances_ft(obj)
 
-        # left guide
-        c.line(prop_left, scy, sx1, scy)
-        if d_left_pt > 0:
-            c.drawString((prop_left + sx1) / 2 - 10, scy + 10, f"{pt_to_ft(d_left_pt):.1f} ft")
+        # Yard edges in page coords
+        yard_left_x   = layout_origin_x
+        yard_right_x  = layout_origin_x + yard_width_ft * scale
+        yard_top_y    = ft_to_pt_y(0)                 #  true top edge of yard
+        yard_bottom_y = ft_to_pt_y(yard_height_ft)    #  true bottom edge of yard
 
-        # right guide
-        c.line(sx2, scy, prop_right, scy)
-        if d_right_pt > 0:
-            c.drawString((sx2 + prop_right) / 2 - 10, scy + 10, f"{pt_to_ft(d_right_pt):.1f} ft")
+        # Object edges in page coords
+        obj_left_x   = ft_to_pt_x(obj.x)
+        obj_right_x  = ft_to_pt_x(obj.x + obj.width)
+        obj_top_y    = ft_to_pt_y(yard_height_ft - (obj.y + obj.height))
+        obj_bottom_y = ft_to_pt_y(yard_height_ft - obj.y)
 
-        # front (top) guide
-        c.line(scx, prop_top, scx, sy1)
-        if d_front_pt > 0:
-            c.drawString(scx + 8, (prop_top + sy1) / 2, f"{pt_to_ft(d_front_pt):.1f} ft")
+        # Horizontal dimension lines (Left & Right)
+        # Left: yard_left -> obj_left
+        draw_dim_line(yard_left_x, obj_top_y, obj_left_x, obj_top_y,
+                      f"{side_labels_prefix}Left {left_ft:.1f} ft", outside_offset=8, label_offset=2)
+        # Right: obj_right -> yard_right
+        draw_dim_line(obj_right_x, obj_top_y, yard_right_x, obj_top_y,
+                      f"{side_labels_prefix}Right {right_ft:.1f} ft", outside_offset=8, label_offset=2)
 
-        # back (bottom) guide
-        c.line(scx, sy2, scx, prop_bottom)
-        if d_back_pt > 0:
-            c.drawString(scx + 8, (sy2 + prop_bottom) / 2, f"{pt_to_ft(d_back_pt):.1f} ft")
+        # Vertical dimension lines (Back/top & Front/bottom)
+        # Back (top): yard_top -> obj_top
+        draw_dim_line(obj_left_x, yard_top_y, obj_left_x, obj_top_y,
+                      f"{side_labels_prefix}Back {back_ft:.1f} ft", outside_offset=8, label_offset=2)
+        # Front (bottom): obj_bottom -> yard_bottom
+        draw_dim_line(obj_left_x, obj_bottom_y, obj_left_x, yard_bottom_y,
+                      f"{side_labels_prefix}Front {front_ft:.1f} ft", outside_offset=8, label_offset=2)
 
-        c.setDash()  # reset
+        return left_ft, right_ft, back_ft, front_ft
 
-    # Legend
+    # Draw and capture shed distances for legend text
+    shed_left_ft = shed_right_ft = shed_back_ft = shed_front_ft = None
+    if getattr(layout, "shed", None):
+        dists = draw_rect_measurements(layout.shed)
+        if dists:
+            shed_left_ft, shed_right_ft, shed_back_ft, shed_front_ft = dists
+
+    # ==== Legend (two columns) ====
     legend_x = margin
     legend_y = margin + 10
+
     c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica", 9)
     c.drawString(legend_x, legend_y + 28, "Legend:")
     c.drawString(legend_x, legend_y + 14, "Blue = House")
     c.drawString(legend_x, legend_y, "Green = Well")
+
     col2_x = legend_x + 150
     c.drawString(col2_x, legend_y + 14, "Brown = Shed")
     c.drawString(col2_x, legend_y, "Red = Septic")
+
+    # Shed distances summary (if available)
+    if shed_left_ft is not None:
+        col3_x = legend_x + 300
+        c.setFont("Helvetica", 9)
+        c.drawString(col3_x, legend_y + 28, "Shed distances (nearest edges):")
+        c.drawString(col3_x, legend_y + 14, f"Left:  {shed_left_ft:.1f} ft")
+        c.drawString(col3_x, legend_y,      f"Right: {shed_right_ft:.1f} ft")
+        c.drawString(col3_x + 150, legend_y + 14, f"Back:  {shed_back_ft:.1f} ft")
+        c.drawString(col3_x + 150, legend_y,      f"Front: {shed_front_ft:.1f} ft")
+
+    # Optional axis labels for orientation (kept commented)
+    """
+    c.setFont("Helvetica-Bold", 10)
+    c.setFillColor(colors.red)
+    # Top (Front)
+    top_center_x = layout_origin_x + (yard_width_ft * scale) / 2
+    c.drawCentredString(top_center_x, layout_origin_y - 12, "Top (Back)")
+    # Bottom (Front)
+    bottom_center_x = layout_origin_x + (yard_width_ft * scale) / 2
+    c.drawCentredString(bottom_center_x, layout_origin_y + yard_height_ft * scale + 14, "Bottom (Front)")
+    # Left
+    left_center_y = layout_origin_y + (yard_height_ft * scale) / 2
+    c.saveState()
+    c.translate(layout_origin_x - 16, left_center_y)
+    c.rotate(90)
+    c.drawCentredString(0, 0, "Left")
+    c.restoreState()
+    # Right
+    right_center_y = layout_origin_y + (yard_height_ft * scale) / 2
+    c.saveState()
+    c.translate(layout_origin_x + yard_width_ft * scale + 16, right_center_y)
+    c.rotate(270)
+    c.drawCentredString(0, 0, "Right")
+    c.restoreState()
+    """
 
     c.showPage()
     c.save()
