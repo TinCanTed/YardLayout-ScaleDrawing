@@ -1,37 +1,36 @@
-# Byte-compiled / optimized / DLL files
+# Python caches
 __pycache__/
 *.py[cod]
-*$py.class
 
-# Distribution / packaging
+# Virtualenv / local env
+.venv/
+.env/
+.envrc
+
+# PyInstaller & specs
+*.spec
 build/
 dist/
-*.egg-info/
 
-# Virtual environment
-.venv/
-env/
-venv/
-
-# PyInstaller
-*.spec
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# IDE / Editor
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Ignore build outputs / exports
+# App outputs / installers / exports
 print/
 ScaleDrawing_Setup_*.zip
 project_backup_*.zip
 setup_gui_scale_drawing*.exe
+
+# Local scratch/backup files
 *.bak
 *.bak.*
+*~
+layout_canvas_editor.bak.py
 
+# OS cruft
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Build artifacts
+*.exe
+*.zip
+*.pdf
 
