@@ -16,13 +16,30 @@ venv/
 # PyInstaller
 *.spec
 
-# OS files
+# OS cruft
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 # IDE / Editor
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# App outputs / installers / backups
+print/
+ScaleDrawing_Setup_*.zip
+project_backup_*.zip
+setup_gui_scale_drawing*.exe
+
+# Local scratch/backup files
+*.bak
+*.bak.*
+*~
+layout_canvas_editor.bak.py
+
+
+
+
 
