@@ -8,7 +8,8 @@ PRINT_DIR = os.path.expanduser("~/gui_scale_drawing/print")
 os.makedirs(PRINT_DIR, exist_ok=True)
 
 
-def export_to_pdf(layout, filename):
+def export_to_pdf(layout, filename, **_ignored):
+    """Accept extra keyword args (e.g., show_distance_guides) for compatibility."""
     page_width, page_height = landscape(letter)  # 11 x 8.5 inches landscape
     margin = 0.5 * inch
     legend_height = 60  # space reserved at the bottom for the legend
