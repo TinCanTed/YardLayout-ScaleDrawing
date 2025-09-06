@@ -129,6 +129,9 @@ class LayoutCanvas(tk.Frame):
         # Refresh guides after everything is drawn
         self.redraw_distance_guides()
 
+        # NEW: object-to-object guides (colored)
+        self._draw_shed_object_distances()
+
     def _draw_rect(self, obj: Optional[RectangleObject]):
         if obj is None or obj.x is None or obj.y is None:
             return
@@ -207,7 +210,121 @@ class LayoutCanvas(tk.Frame):
  
         # Refresh guides after everything is drawn
         self.redraw_distance_guides()
-        
+
+    # --- Distance helpers (feet, top-based Y like our canvas drawing) ---
+
+    def _rect_ft(self, obj):
+        """Return (L,T,R,B) in feet for a rectangle object using top-based Y."""
+        L = obj.x
+        R = obj.x + obj.width
+        T = self.layout.left - (obj.y + obj.height)
+        B = self.layout.left - obj.y
+        return L, T, R, B
+
+    def _nearest_rect_point_ft(self, rect, px, py):
+        """Nearest points between rect (L,T,R,B) and a point (px,py) in feet."""
+        L, T, R, B = rect
+        # clamp point to rect
+        qx = min(max(px, L), R)
+        qy = min(max(py, T), B)
+        return (qx, qy, px, py)
+
+    def _nearest_rect_rect_ft(self, A, Bx):
+        """Nearest points between rect A (L,T,R,B) and rect B (L,T,R,B)."""
+        LA, TA, RA, BA = A
+        LB, TB, RB, BB = Bx
+
+        # delta on each axis (if overlap, delta = 0, else separation)
+        if RA < LB:
+            dx = LB - RA
+            ax = RA
+            bx = LB
+        elif RB < LA:
+            dx = LA - RB
+            ax = LA
+            bx = RB
+        else:
+            dx = 0
+            ax = bx = max(LA, LB) if min(RA, RB) >= max(LA, LB) else (LA + RA) / 2  # any overlap x
+
+        if BA < TB:
+            dy = TB - BA
+            ay = BA
+            by = TB
+        elif BB < TA:
+            dy = TA - BB
+            ay = TA
+            by = BB
+        else:
+            dy = 0
+            ay = by = max(TA, TB) if min(BA, BB) >= max(TA, TB) else (TA + BA) / 2  # any overlap y
+
+        # If overlapping both axes, pick a small vertical segment (visual)
+        if dx == 0 and dy == 0:
+            ay = by = max(TA, TB)  # same y
+            ax = (max(LA, LB) + min(RA, RB)) / 2
+            bx = ax
+        return (ax, ay, bx, by)
+
+    def _ft_to_px(self, x_ft, y_ft):
+        """Feet (top-based) -> canvas pixels (origin top-left of yard)."""
+        return (
+            self.feet_to_pixels(x_ft) + MARGIN_PX,
+            self.feet_to_pixels(y_ft) + MARGIN_PX
+        )
+
+    def _draw_obj_distance_line(self, x1_ft, y1_ft, x2_ft, y2_ft, color_hex, label):
+        """Draw a colored line + label between two ft points (top-based)."""
+        x1, y1 = self._ft_to_px(x1_ft, y1_ft)
+        x2, y2 = self._ft_to_px(x2_ft, y2_ft)
+        # line
+        self.canvas.create_line(x1, y1, x2, y2, fill=color_hex, width=2, tags=("guide_objdist",))
+        # label at midpoint, slightly offset
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        self.canvas.create_text(mx, my - 10, text=label, fill=color_hex, font=("Arial", 10, "bold"),
+                                tags=("guide_objdist",))
+
+    def _draw_shed_object_distances(self):
+        """Draw colored distances from Shed to Well, Septic, House."""
+        shed = getattr(self.layout, "shed", None)
+        if not shed or shed.x is None:
+            return
+
+        # Colors
+        col_house  = HEX["house"]
+        col_well   = HEX["well"]
+        col_septic = HEX["septic"]
+
+        # Rect for shed
+        sL, sT, sR, sB = self._rect_ft(shed)
+
+        # Shed <-> Well (point)
+        well = getattr(self.layout, "well", None)
+        if well and well.x is not None:
+            wx = well.x
+            wy = self.layout.left - well.y  # point Y in top-based feet
+            qx, qy, px, py = self._nearest_rect_point_ft((sL, sT, sR, sB), wx, wy)
+            dist = ((qx - px) ** 2 + (qy - py) ** 2) ** 0.5
+            self._draw_obj_distance_line(qx, qy, px, py, col_well, f"Well {dist:.1f} ft")
+
+        # Shed <-> Septic (point)
+        septic = getattr(self.layout, "septic", None)
+        if septic and septic.x is not None:
+            sx = septic.x
+            sy = self.layout.left - septic.y
+            qx, qy, px, py = self._nearest_rect_point_ft((sL, sT, sR, sB), sx, sy)
+            dist = ((qx - px) ** 2 + (qy - py) ** 2) ** 0.5
+            self._draw_obj_distance_line(qx, qy, px, py, col_septic, f"Septic {dist:.1f} ft")
+
+        # Shed <-> House (rect)
+        house = getattr(self.layout, "house", None)
+        if house and house.x is not None:
+            hL, hT, hR, hB = self._rect_ft(house)
+            ax, ay, bx, by = self._nearest_rect_rect_ft((sL, sT, sR, sB), (hL, hT, hR, hB))
+            dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+            self._draw_obj_distance_line(ax, ay, bx, by, col_house, f"House {dist:.1f} ft")
+    
+
     def set_live_guide_updates(self, on: bool) -> None:
         """Toggle live redraw of distance guides during drag."""
         self.live_guide_updates = bool(on)
