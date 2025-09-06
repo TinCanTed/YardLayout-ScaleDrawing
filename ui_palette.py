@@ -22,3 +22,20 @@ def _hex_to_rgb01(hex_str: str) -> Tuple[float, float, float]:
 # PDF colors (0..1 floats) derived from HEX so both stay in sync.
 PDF = {name: _hex_to_rgb01(hx) for name, hx in HEX.items()}
 
+# Canonicalize any object name to one of: "house", "shed", "well", "septic"
+def role_for(name: str) -> str | None:
+    if not name:
+        return None
+    s = name.strip().lower()
+    # Order matters: match keywords
+    if "house" in s:
+        return "house"
+    if "shed" in s:
+        return "shed"
+    if "well" in s:
+        return "well"
+    if "septic" in s:
+        return "septic"
+    return None
+
+

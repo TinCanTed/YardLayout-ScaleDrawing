@@ -11,6 +11,10 @@ from layout_data import LayoutData, RectangleObject, PointObject
 from file_handler import save_layout_to_file
 from typing import cast, Union
 from typing import Optional
+from ui_palette import HEX, role_for
+COLOR_DEBUG = True  # turn to false when done testing
+if COLOR_DEBUG:
+    print(f"[COLOR DEBUG] HEX keys = {list(HEX.keys())}")
 
 # Grid and zoom configuration
 GRID_SPACING_FT = 10
@@ -116,66 +120,94 @@ class LayoutCanvas(tk.Frame):
         self.draw_grid()
         self.draw_legend()
 
-        def draw_rect(obj: Optional[RectangleObject], color):
-            if obj is None or obj.x is None or obj.y is None:
-                return
-            # draw the rectangle
-            width = obj.width
-            height = obj.height
-            x1 = self.feet_to_pixels(obj.x) + MARGIN_PX
-            y1 = self.feet_to_pixels(self.layout.left - obj.y - obj.height) + MARGIN_PX
-            x2 = x1 + self.feet_to_pixels(width)
-            y2 = y1 + self.feet_to_pixels(height)
-            tag = obj.name.lower().replace(" ", "_")
-            # NEW: role tag (for guides/rules). Extend as you add more object types.
-            role = None
-            name_l = obj.name.lower()
-            if name_l == "shed":
-                role = "shed"
-            elif name_l == "house":
-                role = "house"
-            elif name_l == "septic":
-                role = "septic"
-            elif name_l == "well":
-                role = "well"
+        # Draw all objects using the unified palette
+        self._draw_rect(self.layout.house)
+        self._draw_rect(self.layout.shed)
+        self._draw_point(self.layout.well)
+        self._draw_point(self.layout.septic)
 
-            role_tags = (role,) if role else tuple()
-
-            # Include the role tag on ALL shed items so bbox("shed") works
-            self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, tags=("draggable", tag) + role_tags)
-            self.canvas.create_text((x1+x2)/2, (y1+y2)/2, text=obj.name, fill="white", tags=("draggable", tag) + role_tags)
-
-            if name_l == "shed":
-                cx = (x1 + x2) / 2
-                cy = y1 - 15
-                self.canvas.create_text(
-                    cx, cy,
-                    text="↻",
-                    fill="blue",
-                    font=("Arial", 14, "bold"),
-                    tags=("draggable", tag, "rotate_shed") + role_tags
-                )
-                self.canvas.tag_bind("rotate_shed", "<Button-1>", self.rotate_shed_by_click)
-
-        def draw_point(obj: Optional[PointObject], color):
-            if obj is None or obj.x is None or obj.y is None:
-                return
-            # draw the point
-
-            x = self.feet_to_pixels(obj.x) + MARGIN_PX
-            y = self.feet_to_pixels(self.layout.left - obj.y) + MARGIN_PX
-            r = 6
-            tag = obj.name.lower().replace(" ", "_")
-            self.canvas.create_oval(x - r, y - r, x + r, y + r, fill=color, tags=("draggable", tag))
-            self.canvas.create_text(x, y - 10, text=obj.name, fill="black", tags=("draggable", tag))
-
-        draw_rect(self.layout.house, "blue")
-        draw_rect(self.layout.shed, "saddlebrown")
-        draw_point(self.layout.well, "darkgreen")
-        draw_point(self.layout.septic, "gray")
         # Refresh guides after everything is drawn
         self.redraw_distance_guides()
 
+    def _draw_rect(self, obj: Optional[RectangleObject]):
+        if obj is None or obj.x is None or obj.y is None:
+            return
+
+        width = obj.width
+        height = obj.height
+        x1 = self.feet_to_pixels(obj.x) + MARGIN_PX
+        y1 = self.feet_to_pixels(self.layout.left - obj.y - obj.height) + MARGIN_PX
+        x2 = x1 + self.feet_to_pixels(width)
+        y2 = y1 + self.feet_to_pixels(height)
+
+        name_l = (obj.name or "").lower()
+        tag = name_l.replace(" ", "_")
+
+        # role tag for selection/rules
+        role = role_for(obj.name)
+        role_tags = (role,) if role else tuple()
+
+        fill_color = HEX.get(role or name_l, "gray")
+        if COLOR_DEBUG:
+            print(f"[COLOR DEBUG] RECT name='{obj.name}' role='{role}' fill={fill_color}")
+        # rectangle + label
+        self.canvas.create_rectangle(
+            x1, y1, x2, y2,
+            fill=fill_color,
+            tags=("draggable", tag) + role_tags
+        )
+        self.canvas.create_text(
+            (x1 + x2) / 2, (y1 + y2) / 2,
+            text=obj.name,
+            fill="white",
+            tags=("draggable", tag) + role_tags
+        )
+
+        if name_l == "shed":
+            cx = (x1 + x2) / 2
+            cy = y1 - 15
+            self.canvas.create_text(
+                cx, cy,
+                text="↻",
+                fill="blue",
+                font=("Arial", 14, "bold"),
+                tags=("draggable", tag, "rotate_shed") + role_tags
+            )
+            self.canvas.tag_bind("rotate_shed", "<Button-1>", self.rotate_shed_by_click)
+
+    def _draw_point(self, obj: Optional[PointObject]):
+        if obj is None or obj.x is None or obj.y is None:
+            return
+
+        x = self.feet_to_pixels(obj.x) + MARGIN_PX
+        y = self.feet_to_pixels(self.layout.left - obj.y) + MARGIN_PX
+        r = 6
+
+        name_l = (obj.name or "").lower()
+        tag = name_l.replace(" ", "_")
+
+        role = role_for(obj.name)
+        role_tags = (role,) if role else tuple()
+
+        fill_color = HEX.get(role or name_l, "gray")
+        if COLOR_DEBUG:
+            print(f"[COLOR DEBUG] POINT name='{obj.name}' role='{role}' fill={fill_color}")
+
+        self.canvas.create_oval(
+            x - r, y - r, x + r, y + r,
+            fill=fill_color,
+            tags=("draggable", tag) + role_tags
+        )
+        self.canvas.create_text(
+            x, y - 10,
+            text=obj.name,
+            fill="black",
+            tags=("draggable", tag) + role_tags
+        )
+ 
+        # Refresh guides after everything is drawn
+        self.redraw_distance_guides()
+        
     def set_live_guide_updates(self, on: bool) -> None:
         """Toggle live redraw of distance guides during drag."""
         self.live_guide_updates = bool(on)
@@ -483,4 +515,3 @@ class LayoutCanvas(tk.Frame):
 
     def rotate_shed_by_click(self, _event):
         self.rotate_shed(_event)
-

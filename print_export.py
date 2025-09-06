@@ -1,8 +1,11 @@
 from reportlab.lib.pagesizes import landscape, letter
 from reportlab.lib import colors
+from ui_palette import PDF
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 import os
+
+PDF_COLOR_DEBUG = True  # set False when done
 
 PRINT_DIR = os.path.expanduser("~/gui_scale_drawing/print")
 os.makedirs(PRINT_DIR, exist_ok=True)
@@ -104,13 +107,17 @@ def export_to_pdf(layout, filename, **_ignored):
         c.drawString(x + 6, y - 4, obj.name)
 
     # Objects
-    draw_rect(layout.house, colors.Color(0.2, 0.5, 0.9))     # Blue
-    draw_rect(layout.shed,  colors.Color(0.5, 0.3, 0.1))     # Brown
-    draw_point(layout.well,   colors.Color(0, 0.7, 0))       # Green
-    draw_point(layout.septic, colors.Color(0.7, 0, 0))       # Red
+    # was: draw_rect(layout.house, colors.Color(0.2, 0.5, 0.9)), now it copies the object colors from the PDF
+
+    if PDF_COLOR_DEBUG and getattr(layout, "septic", None):
+        print(f"[PDF COLOR DEBUG] septic PDF color {PDF['septic']}")
+    draw_rect(layout.house, colors.Color(*PDF["house"]))
+    draw_rect(layout.shed,  colors.Color(*PDF["shed"]))
+    draw_point(layout.well,   colors.Color(*PDF["well"]))
+    draw_point(layout.septic, colors.Color(*PDF["septic"]))
+
 
     # ==== Distance label helpers (NEAREST boundary edges) ====
-
     # Arrowhead helper
     def draw_arrowhead(x, y, dx, dy, size=6):
         """
