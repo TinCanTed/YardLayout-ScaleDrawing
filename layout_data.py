@@ -10,6 +10,27 @@ import json
 from dataclasses import dataclass, asdict, field
 from typing import Optional, Dict
 
+# Normalize any name to a canonical role if possible
+try:
+    # If ui_palette is available, reuse its normalizer
+    from ui_palette import role_for  # returns "house" | "shed" | "well" | "septic" | None
+except Exception:
+    # Fallback (keeps layout_data independent)
+    def role_for(name: str) -> str | None:
+        if not name:
+            return None
+        s = str(name).strip().lower()
+        if "house" in s:
+            return "house"
+        if "shed" in s:
+            return "shed"
+        if "well" in s:
+            return "well"
+        if "septic" in s:
+            return "septic"
+        return None
+
+
 @dataclass
 class RectangleObject:
     """
@@ -157,39 +178,39 @@ class LayoutData:
             data = json.load(f)
             return LayoutData.from_dict(data)
 
+    def resolve_obj(self, name_or_role: str):
+        """
+        Resolve an object by canonical role ('house'/'shed'/'well'/'septic')
+        or by exact display name (e.g., 'Septic Tank'). Returns the object or None.
+        """
+        r = role_for(name_or_role)
+        if r:
+            return getattr(self, r, None)
+
+        target_name = str(name_or_role)
+        for obj in (self.house, self.shed, self.well, self.septic):
+            if obj is not None and getattr(obj, "name", None) == target_name:
+                return obj
+        return None
+
     def update_object_position(self, name: str, x: float, y: float):
         """
-        Updates the position of an object based on its name.
-
-        Args:
-            name (str): Name of the object to update.
-            x (float): New x-coordinate in feet.
-            y (float): New y-coordinate in feet.
+        Update by display name (e.g., 'Septic Tank') OR by role alias ('septic').
         """
-        if name.lower() == "well":
-            self.well.x, self.well.y = x, y
-        elif name.lower() == "septic tank":
-            self.septic.x, self.septic.y = x, y
-        elif name.lower() == "house":
-            self.house.x, self.house.y = x, y
-        elif name.lower() == "shed":
-            self.shed.x, self.shed.y = x, y
-        else:
+        obj = self.resolve_obj(name)
+        if obj is None:
             raise ValueError(f"Unknown object name: {name}")
+        obj.x = x
+        obj.y = y
+
 
     def edit_dimensions(self, name: str, width: float, height: float):
         """
-        Edits dimensions of a rectangular object.
-
-        Args:
-            name (str): Name of the object ("house" or "shed").
-            width (float): New width in feet.
-            height (float): New height in feet.
+        Edit dimensions of a rectangular object by display name or role.
         """
-        if name.lower() == "house":
-            self.house.width, self.house.height = width, height
-        elif name.lower() == "shed":
-            self.shed.width, self.shed.height = width, height
-        else:
+        obj = self.resolve_obj(name)
+        if obj is None or not isinstance(obj, RectangleObject):
             raise ValueError(f"Unknown rectangle object: {name}")
+        obj.width = width
+        obj.height = height
 
