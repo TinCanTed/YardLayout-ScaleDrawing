@@ -12,7 +12,7 @@ from file_handler import save_layout_to_file
 from typing import cast, Union
 from typing import Optional
 from ui_palette import HEX, role_for
-COLOR_DEBUG = True  # turn to false when done testing
+COLOR_DEBUG = False  # turn to false when done testing
 if COLOR_DEBUG:
     print(f"[COLOR DEBUG] HEX keys = {list(HEX.keys())}")
 
@@ -376,31 +376,6 @@ class LayoutCanvas(tk.Frame):
         item_id = closest[0]
         tags = self.canvas.gettags(item_id)
 
-        """
-        # choose a role tag we care about
-        drag_role = None
-        for t in tags:
-        if t in ("shed", "house", "well", "septic"):
-            drag_role = t
-            break
-        if not drag_role:
-            # fall back to any non-generic tag (skip "draggable")
-            for t in tags:
-                if t != "draggable":
-                    drag_role = t
-                    break
-
-        if not drag_role:
-            return  # nothing draggable we know
-
-        self._drag_role = drag_role
-        self._drag_item = item_id
-
-        # remember pointer offset relative to the item's bbox top-left
-        bx1, by1, bx2, by2 = self.canvas.bbox(item_id)
-        self.drag_data["offset_x"] = event.x - bx1
-        self.drag_data["offset_y"] = event.y - by1
-        """
         # Prefer known roles
         role_tag = next((t for t in tags if t in ("shed","house","well","septic")), None)
         if role_tag is None or role_tag == "rotate_shed":
@@ -501,7 +476,7 @@ class LayoutCanvas(tk.Frame):
             return
 
         self.layout.update_object_position(name, new_x, new_y)
-        print(f"[DEBUG] Updated {tag} to unflipped x={new_x}, y={new_y}")
+        # print(f"[DEBUG] Updated {tag} to unflipped x={new_x}, y={new_y}")
         save_layout_to_file(self.layout, self.filename)
 
         if callable(getattr(self, "on_layout_changed", None)):

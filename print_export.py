@@ -5,7 +5,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 import os
 
-PDF_COLOR_DEBUG = True  # set False when done
+PDF_COLOR_DEBUG = False  # set False when done
 
 PRINT_DIR = os.path.expanduser("~/gui_scale_drawing/print")
 os.makedirs(PRINT_DIR, exist_ok=True)
