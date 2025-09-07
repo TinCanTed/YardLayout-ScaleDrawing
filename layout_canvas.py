@@ -84,6 +84,7 @@ class LayoutCanvas(tk.Frame):
         # How many pixels is 1 foot?
         px_per_ft = float(self.feet_to_pixels(1.0))
         return 0.0 if px_per_ft == 0 else (px / px_per_ft)
+
     
 
     def draw_grid(self):
@@ -137,7 +138,7 @@ class LayoutCanvas(tk.Frame):
         self.redraw_distance_guides()
 
         # NEW: object-to-object guides (colored)
-        self._draw_shed_object_distances()
+        #self._draw_shed_object_distances()
 
     def _draw_rect(self, obj: Optional[RectangleObject]):
         if obj is None or obj.x is None or obj.y is None:
@@ -677,8 +678,50 @@ class LayoutCanvas(tk.Frame):
 
         # --- NEW: colored shed→object guides ---
         if getattr(self, "show_object_distances", True):
-            self._draw_shed_object_distances() 
+            self._draw_shed_object_distances()
 
+    def _notify_layout_changed(self, reason: str = "") -> None:
+        """Mark dirty, save JSON, and notify the change callback (if any)."""
+        # Mark dirty
+        setattr(self, "is_dirty", True)
 
-    def rotate_shed_by_click(self, _event):
-        self.rotate_shed(_event)
+        # Persist immediately
+        try:
+            if getattr(self, "filename", None):
+                save_layout_to_file(self.layout, self.filename)
+        except Exception as e:
+            print(f"[WARN] save_layout_to_file failed: {e}")
+
+        # Notify callback (support both signatures: cb() and cb(layout))
+        cb = getattr(self, "on_layout_changed", None)
+        if callable(cb):
+            try:
+                cb(self.layout)
+            except TypeError:
+                try:
+                    cb()
+                except Exception as e:
+                    print(f"[WARN] on_layout_changed callback failed: {e}")
+            except Exception as e:
+                print(f"[WARN] on_layout_changed callback failed: {e}")
+    
+
+    def rotate_shed_by_click(self, event=None):
+        """Rotate the shed 90° around its center and persist the change."""
+        shed = getattr(self.layout, "shed", None)
+        if not shed or shed.width is None or shed.height is None:
+            return
+
+        # Keep center fixed while swapping w/h
+        cx = shed.x + shed.width / 2.0
+        cy = shed.y + shed.height / 2.0
+        shed.width, shed.height = shed.height, shed.width
+        shed.x = cx - shed.width / 2.0
+        shed.y = cy - shed.height / 2.0
+
+        # NEW: mark dirty + notify (triggers autosave/export just like drag)
+        self._notify_layout_changed(reason="rotate_shed")
+
+        # Redraw shapes + guides
+        self.draw_objects()
+
