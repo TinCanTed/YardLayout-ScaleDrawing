@@ -79,6 +79,13 @@ class LayoutCanvas(tk.Frame):
     def feet_to_pixels(self, feet):
         return feet * self.feet_to_pixel_ratio
 
+    def pixels_to_feet(self, px: float) -> float:
+        """Inverse of feet_to_pixels for deltas (no margin involved)."""
+        # How many pixels is 1 foot?
+        px_per_ft = float(self.feet_to_pixels(1.0))
+        return 0.0 if px_per_ft == 0 else (px / px_per_ft)
+    
+
     def draw_grid(self):
         spacing_ft = GRID_SPACING_FT
         total_width_ft = self.layout.front
@@ -323,7 +330,15 @@ class LayoutCanvas(tk.Frame):
             ax, ay, bx, by = self._nearest_rect_rect_ft((sL, sT, sR, sB), (hL, hT, hR, hB))
             dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
             self._draw_obj_distance_line(ax, ay, bx, by, col_house, f"House {dist:.1f} ft")
-    
+
+    # schedule a guides redraw on the next Tk tick (coalesces rapid drags)
+    def request_guide_redraw(self):
+        """Coalesce rapid drags into a single guide redraw on next Tk tick."""
+        job = getattr(self, "_guide_redraw_job", None)
+        if job:
+            self.after_cancel(job)
+            self._guide_redraw_job = None
+        self._guide_redraw_job = self.after(0, self.redraw_distance_guides)    
 
     def set_live_guide_updates(self, on: bool) -> None:
         """Toggle live redraw of distance guides during drag."""
@@ -349,30 +364,85 @@ class LayoutCanvas(tk.Frame):
             y += 30
 
     def on_drag_start(self, event):
+        # cancel any pending redraw so we reschedule cleanly on move
+        if getattr(self, "_guide_redraw_job", None):
+            self.after_cancel(self._guide_redraw_job)
+            self._guide_redraw_job = None
+
         closest = self.canvas.find_closest(event.x, event.y)
-        if closest:
-            tags = self.canvas.gettags(closest[0])
-            for tag in tags:
-                if tag != "draggable":
-                    self.drag_data["tag"] = tag
-                    bbox = self.canvas.bbox(closest[0])
-                    self.drag_data["offset_x"] = event.x - bbox[0]
-                    self.drag_data["offset_y"] = event.y - bbox[1]
+        if not closest:
+            return
+
+        item_id = closest[0]
+        tags = self.canvas.gettags(item_id)
+
+        """
+        # choose a role tag we care about
+        drag_role = None
+        for t in tags:
+        if t in ("shed", "house", "well", "septic"):
+            drag_role = t
+            break
+        if not drag_role:
+            # fall back to any non-generic tag (skip "draggable")
+            for t in tags:
+                if t != "draggable":
+                    drag_role = t
                     break
 
+        if not drag_role:
+            return  # nothing draggable we know
+
+        self._drag_role = drag_role
+        self._drag_item = item_id
+
+        # remember pointer offset relative to the item's bbox top-left
+        bx1, by1, bx2, by2 = self.canvas.bbox(item_id)
+        self.drag_data["offset_x"] = event.x - bx1
+        self.drag_data["offset_y"] = event.y - by1
+        """
+        # Prefer known roles
+        role_tag = next((t for t in tags if t in ("shed","house","well","septic")), None)
+        if role_tag is None or role_tag == "rotate_shed":
+            # fall back to any non-generic tag, but skip rotate glyph
+            role_tag = next((t for t in tags if t not in ("draggable","rotate_shed")), None)
+
+        if not role_tag:
+            return
+
+        self.drag_data["tag"] = role_tag
+        bx1, by1, bx2, by2 = self.canvas.bbox(item_id)
+        self.drag_data["offset_x"] = event.x - bx1
+        self.drag_data["offset_y"] = event.y - by1
+        
     def on_drag_move(self, event):
         tag = self.drag_data["tag"]
         if tag:
             items = self.canvas.find_withtag(tag)
             if not items:
                 return
+
+            # current bbox BEFORE this move
             bbox = self.canvas.bbox(items[0])
             dx = event.x - self.drag_data["offset_x"] - bbox[0]
             dy = event.y - self.drag_data["offset_y"] - bbox[1]
+            # 1) move all canvas items for this tag
             for item in items:
                 self.canvas.move(item, dx, dy)
 
-        # Live redraw (throttled) if enabled
+            # 2) update the underlying layout in FEET (so guides recompute correctly)
+            if tag in ("shed", "house", "well", "septic"):
+                dfx = self.pixels_to_feet(dx)
+                dfy = self.pixels_to_feet(dy)
+
+                obj = getattr(self.layout, tag, None)
+                if obj is not None and obj.x is not None and obj.y is not None:
+                    obj.x += dfx
+                    obj.y += dfy
+                # NOTE: Your y is bottom-based feet (Front distance). Positive dy (down)
+                # increases pixels and correctly increases obj.y, so += dfy is right.
+
+        # 3) Live redraw (throttled) if enabled
         if self.live_guide_updates and self.show_distance_guides:
             if self._guide_redraw_job:
                 self.after_cancel(self._guide_redraw_job)
@@ -561,6 +631,7 @@ class LayoutCanvas(tk.Frame):
         """Draw light dashed lines + ft labels from shed to property edges."""
         # Clear previous guides
         self.canvas.delete("distance_guide")
+        self.canvas.delete("guide_objdist")
 
         if not getattr(self, "show_distance_guides", False):
             return
@@ -628,6 +699,10 @@ class LayoutCanvas(tk.Frame):
         draw_v_guide(shed_cx, py1, sy1, back_ft)
         # Bottom segment (sy2..py2) should show FRONT
         draw_v_guide(shed_cx, sy2, py2, front_ft)
+
+        # --- NEW: colored shed→object guides ---
+        if getattr(self, "show_object_distances", True):
+            self._draw_shed_object_distances() 
 
 
     def rotate_shed_by_click(self, _event):
