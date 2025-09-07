@@ -5,7 +5,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 import os
 
-PDF_COLOR_DEBUG = True  # set False when done
+PDF_COLOR_DEBUG = False  # set False when done
 
 PRINT_DIR = os.path.expanduser("~/gui_scale_drawing/print")
 os.makedirs(PRINT_DIR, exist_ok=True)
@@ -106,6 +106,59 @@ def export_to_pdf(layout, filename, **_ignored):
         c.setFillColorRGB(0, 0, 0)
         c.drawString(x + 6, y - 4, obj.name)
 
+    def rect_ft(obj, yard_height_ft):
+        L = obj.x
+        R = obj.x + obj.width
+        T = yard_height_ft - (obj.y + obj.height)
+        B = yard_height_ft - obj.y
+        return L, T, R, B
+
+    def nearest_rect_point_ft(rect, px, py):
+        L, T, R, B = rect
+        qx = min(max(px, L), R)
+        qy = min(max(py, T), B)
+        return (qx, qy, px, py)
+
+    def nearest_rect_rect_ft(A, Bx):
+        LA, TA, RA, BA = A
+        LB, TB, RB, BB = Bx
+        if RA < LB:
+            ax, bx = RA, LB
+        elif RB < LA:
+            ax, bx = LA, RB
+        else:
+            ax = bx = max(LA, LB) if min(RA, RB) >= max(LA, LB) else (LA + RA) / 2
+
+        if BA < TB:
+            ay, by = BA, TB
+        elif BB < TA:
+            ay, by = TA, BB
+        else:
+            ay = by = max(TA, TB) if min(BA, BB) >= max(TA, TB) else (TA + BA) / 2
+
+        # overlapping both axes -> small vertical segment
+        if (ax == bx) and (ay == by):
+            ay = by = max(TA, TB)
+        return (ax, ay, bx, by)
+
+    def draw_obj_distance_line(qx_ft, qy_ft, px_ft, py_ft, rgb01, label):
+        x1 = ft_to_pt_x(qx_ft) 
+        y1 = ft_to_pt_y(qy_ft)
+        x2 = ft_to_pt_x(px_ft) 
+        y2 = ft_to_pt_y(py_ft)
+        c.setStrokeColor(colors.Color(*rgb01))
+        c.setFillColor(colors.Color(*rgb01))
+        c.setLineWidth(1.2)
+        c.line(x1, y1, x2, y2)
+        # label
+        mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        c.setFont("Helvetica-Bold", 8)
+        c.drawCentredString(mx, my - 8, label)
+        # reset if you like:
+        c.setStrokeColor(colors.black)
+        c.setFillColor(colors.black)
+
+    
     # Objects
     # was: draw_rect(layout.house, colors.Color(0.2, 0.5, 0.9)), now it copies the object colors from the PDF
 
@@ -115,6 +168,32 @@ def export_to_pdf(layout, filename, **_ignored):
     draw_rect(layout.shed,  colors.Color(*PDF["shed"]))
     draw_point(layout.well,   colors.Color(*PDF["well"]))
     draw_point(layout.septic, colors.Color(*PDF["septic"]))
+
+    # --- Object-to-object distances from Shed ---
+    if getattr(layout, "shed", None) and layout.shed.x is not None:
+        sL, sT, sR, sB = rect_ft(layout.shed, yard_height_ft)
+
+        # Shed <-> Well
+        if getattr(layout, "well", None) and layout.well.x is not None:
+            wx, wy = layout.well.x, yard_height_ft - layout.well.y
+            qx, qy, px, py = nearest_rect_point_ft((sL, sT, sR, sB), wx, wy)
+            dist = ((qx - px)**2 + (qy - py)**2) ** 0.5
+            draw_obj_distance_line(qx, qy, px, py, PDF["well"], f"Well {dist:.1f} ft")
+
+        # Shed <-> Septic
+        if getattr(layout, "septic", None) and layout.septic.x is not None:
+            sx, sy = layout.septic.x, yard_height_ft - layout.septic.y
+            qx, qy, px, py = nearest_rect_point_ft((sL, sT, sR, sB), sx, sy)
+            dist = ((qx - px)**2 + (qy - py)**2) ** 0.5
+            draw_obj_distance_line(qx, qy, px, py, PDF["septic"], f"Septic {dist:.1f} ft")
+
+        # Shed <-> House
+        if getattr(layout, "house", None) and layout.house.x is not None:
+            hL, hT, hR, hB = rect_ft(layout.house, yard_height_ft)
+            ax, ay, bx, by = nearest_rect_rect_ft((sL, sT, sR, sB), (hL, hT, hR, hB))
+            dist = ((ax - bx)**2 + (ay - by)**2) ** 0.5
+            draw_obj_distance_line(ax, ay, bx, by, PDF["house"], f"House {dist:.1f} ft")
+    
 
 
     # ==== Distance label helpers (NEAREST boundary edges) ====

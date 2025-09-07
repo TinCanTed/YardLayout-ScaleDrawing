@@ -12,7 +12,7 @@ from file_handler import save_layout_to_file
 from typing import cast, Union
 from typing import Optional
 from ui_palette import HEX, role_for
-COLOR_DEBUG = True  # turn to false when done testing
+COLOR_DEBUG = False  # turn to false when done testing
 if COLOR_DEBUG:
     print(f"[COLOR DEBUG] HEX keys = {list(HEX.keys())}")
 
@@ -79,6 +79,13 @@ class LayoutCanvas(tk.Frame):
     def feet_to_pixels(self, feet):
         return feet * self.feet_to_pixel_ratio
 
+    def pixels_to_feet(self, px: float) -> float:
+        """Inverse of feet_to_pixels for deltas (no margin involved)."""
+        # How many pixels is 1 foot?
+        px_per_ft = float(self.feet_to_pixels(1.0))
+        return 0.0 if px_per_ft == 0 else (px / px_per_ft)
+    
+
     def draw_grid(self):
         spacing_ft = GRID_SPACING_FT
         total_width_ft = self.layout.front
@@ -128,6 +135,9 @@ class LayoutCanvas(tk.Frame):
 
         # Refresh guides after everything is drawn
         self.redraw_distance_guides()
+
+        # NEW: object-to-object guides (colored)
+        self._draw_shed_object_distances()
 
     def _draw_rect(self, obj: Optional[RectangleObject]):
         if obj is None or obj.x is None or obj.y is None:
@@ -207,7 +217,129 @@ class LayoutCanvas(tk.Frame):
  
         # Refresh guides after everything is drawn
         self.redraw_distance_guides()
-        
+
+    # --- Distance helpers (feet, top-based Y like our canvas drawing) ---
+
+    def _rect_ft(self, obj):
+        """Return (L,T,R,B) in feet for a rectangle object using top-based Y."""
+        L = obj.x
+        R = obj.x + obj.width
+        T = self.layout.left - (obj.y + obj.height)
+        B = self.layout.left - obj.y
+        return L, T, R, B
+
+    def _nearest_rect_point_ft(self, rect, px, py):
+        """Nearest points between rect (L,T,R,B) and a point (px,py) in feet."""
+        L, T, R, B = rect
+        # clamp point to rect
+        qx = min(max(px, L), R)
+        qy = min(max(py, T), B)
+        return (qx, qy, px, py)
+
+    def _nearest_rect_rect_ft(self, A, Bx):
+        """Nearest points between rect A (L,T,R,B) and rect B (L,T,R,B)."""
+        LA, TA, RA, BA = A
+        LB, TB, RB, BB = Bx
+
+        # delta on each axis (if overlap, delta = 0, else separation)
+        if RA < LB:
+            dx = LB - RA
+            ax = RA
+            bx = LB
+        elif RB < LA:
+            dx = LA - RB
+            ax = LA
+            bx = RB
+        else:
+            dx = 0
+            ax = bx = max(LA, LB) if min(RA, RB) >= max(LA, LB) else (LA + RA) / 2  # any overlap x
+
+        if BA < TB:
+            dy = TB - BA
+            ay = BA
+            by = TB
+        elif BB < TA:
+            dy = TA - BB
+            ay = TA
+            by = BB
+        else:
+            dy = 0
+            ay = by = max(TA, TB) if min(BA, BB) >= max(TA, TB) else (TA + BA) / 2  # any overlap y
+
+        # If overlapping both axes, pick a small vertical segment (visual)
+        if dx == 0 and dy == 0:
+            ay = by = max(TA, TB)  # same y
+            ax = (max(LA, LB) + min(RA, RB)) / 2
+            bx = ax
+        return (ax, ay, bx, by)
+
+    def _ft_to_px(self, x_ft, y_ft):
+        """Feet (top-based) -> canvas pixels (origin top-left of yard)."""
+        return (
+            self.feet_to_pixels(x_ft) + MARGIN_PX,
+            self.feet_to_pixels(y_ft) + MARGIN_PX
+        )
+
+    def _draw_obj_distance_line(self, x1_ft, y1_ft, x2_ft, y2_ft, color_hex, label):
+        """Draw a colored line + label between two ft points (top-based)."""
+        x1, y1 = self._ft_to_px(x1_ft, y1_ft)
+        x2, y2 = self._ft_to_px(x2_ft, y2_ft)
+        # line
+        self.canvas.create_line(x1, y1, x2, y2, fill=color_hex, width=2, tags=("guide_objdist",))
+        # label at midpoint, slightly offset
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        self.canvas.create_text(mx, my - 10, text=label, fill=color_hex, font=("Arial", 10, "bold"),
+                                tags=("guide_objdist",))
+
+    def _draw_shed_object_distances(self):
+        """Draw colored distances from Shed to Well, Septic, House."""
+        shed = getattr(self.layout, "shed", None)
+        if not shed or shed.x is None:
+            return
+
+        # Colors
+        col_house  = HEX["house"]
+        col_well   = HEX["well"]
+        col_septic = HEX["septic"]
+
+        # Rect for shed
+        sL, sT, sR, sB = self._rect_ft(shed)
+
+        # Shed <-> Well (point)
+        well = getattr(self.layout, "well", None)
+        if well and well.x is not None:
+            wx = well.x
+            wy = self.layout.left - well.y  # point Y in top-based feet
+            qx, qy, px, py = self._nearest_rect_point_ft((sL, sT, sR, sB), wx, wy)
+            dist = ((qx - px) ** 2 + (qy - py) ** 2) ** 0.5
+            self._draw_obj_distance_line(qx, qy, px, py, col_well, f"Well {dist:.1f} ft")
+
+        # Shed <-> Septic (point)
+        septic = getattr(self.layout, "septic", None)
+        if septic and septic.x is not None:
+            sx = septic.x
+            sy = self.layout.left - septic.y
+            qx, qy, px, py = self._nearest_rect_point_ft((sL, sT, sR, sB), sx, sy)
+            dist = ((qx - px) ** 2 + (qy - py) ** 2) ** 0.5
+            self._draw_obj_distance_line(qx, qy, px, py, col_septic, f"Septic {dist:.1f} ft")
+
+        # Shed <-> House (rect)
+        house = getattr(self.layout, "house", None)
+        if house and house.x is not None:
+            hL, hT, hR, hB = self._rect_ft(house)
+            ax, ay, bx, by = self._nearest_rect_rect_ft((sL, sT, sR, sB), (hL, hT, hR, hB))
+            dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+            self._draw_obj_distance_line(ax, ay, bx, by, col_house, f"House {dist:.1f} ft")
+
+    # schedule a guides redraw on the next Tk tick (coalesces rapid drags)
+    def request_guide_redraw(self):
+        """Coalesce rapid drags into a single guide redraw on next Tk tick."""
+        job = getattr(self, "_guide_redraw_job", None)
+        if job:
+            self.after_cancel(job)
+            self._guide_redraw_job = None
+        self._guide_redraw_job = self.after(0, self.redraw_distance_guides)    
+
     def set_live_guide_updates(self, on: bool) -> None:
         """Toggle live redraw of distance guides during drag."""
         self.live_guide_updates = bool(on)
@@ -232,30 +364,60 @@ class LayoutCanvas(tk.Frame):
             y += 30
 
     def on_drag_start(self, event):
-        closest = self.canvas.find_closest(event.x, event.y)
-        if closest:
-            tags = self.canvas.gettags(closest[0])
-            for tag in tags:
-                if tag != "draggable":
-                    self.drag_data["tag"] = tag
-                    bbox = self.canvas.bbox(closest[0])
-                    self.drag_data["offset_x"] = event.x - bbox[0]
-                    self.drag_data["offset_y"] = event.y - bbox[1]
-                    break
+        # cancel any pending redraw so we reschedule cleanly on move
+        if getattr(self, "_guide_redraw_job", None):
+            self.after_cancel(self._guide_redraw_job)
+            self._guide_redraw_job = None
 
+        closest = self.canvas.find_closest(event.x, event.y)
+        if not closest:
+            return
+
+        item_id = closest[0]
+        tags = self.canvas.gettags(item_id)
+
+        # Prefer known roles
+        role_tag = next((t for t in tags if t in ("shed","house","well","septic")), None)
+        if role_tag is None or role_tag == "rotate_shed":
+            # fall back to any non-generic tag, but skip rotate glyph
+            role_tag = next((t for t in tags if t not in ("draggable","rotate_shed")), None)
+
+        if not role_tag:
+            return
+
+        self.drag_data["tag"] = role_tag
+        bx1, by1, bx2, by2 = self.canvas.bbox(item_id)
+        self.drag_data["offset_x"] = event.x - bx1
+        self.drag_data["offset_y"] = event.y - by1
+        
     def on_drag_move(self, event):
         tag = self.drag_data["tag"]
         if tag:
             items = self.canvas.find_withtag(tag)
             if not items:
                 return
+
+            # current bbox BEFORE this move
             bbox = self.canvas.bbox(items[0])
             dx = event.x - self.drag_data["offset_x"] - bbox[0]
             dy = event.y - self.drag_data["offset_y"] - bbox[1]
+            # 1) move all canvas items for this tag
             for item in items:
                 self.canvas.move(item, dx, dy)
 
-        # Live redraw (throttled) if enabled
+            # 2) update the underlying layout in FEET (so guides recompute correctly)
+            if tag in ("shed", "house", "well", "septic"):
+                dfx = self.pixels_to_feet(dx)
+                dfy = self.pixels_to_feet(dy)
+
+                obj = getattr(self.layout, tag, None)
+                if obj is not None and obj.x is not None and obj.y is not None:
+                    obj.x += dfx
+                    obj.y += dfy
+                # NOTE: Your y is bottom-based feet (Front distance). Positive dy (down)
+                # increases pixels and correctly increases obj.y, so += dfy is right.
+
+        # 3) Live redraw (throttled) if enabled
         if self.live_guide_updates and self.show_distance_guides:
             if self._guide_redraw_job:
                 self.after_cancel(self._guide_redraw_job)
@@ -314,7 +476,7 @@ class LayoutCanvas(tk.Frame):
             return
 
         self.layout.update_object_position(name, new_x, new_y)
-        print(f"[DEBUG] Updated {tag} to unflipped x={new_x}, y={new_y}")
+        # print(f"[DEBUG] Updated {tag} to unflipped x={new_x}, y={new_y}")
         save_layout_to_file(self.layout, self.filename)
 
         if callable(getattr(self, "on_layout_changed", None)):
@@ -444,6 +606,7 @@ class LayoutCanvas(tk.Frame):
         """Draw light dashed lines + ft labels from shed to property edges."""
         # Clear previous guides
         self.canvas.delete("distance_guide")
+        self.canvas.delete("guide_objdist")
 
         if not getattr(self, "show_distance_guides", False):
             return
@@ -511,6 +674,10 @@ class LayoutCanvas(tk.Frame):
         draw_v_guide(shed_cx, py1, sy1, back_ft)
         # Bottom segment (sy2..py2) should show FRONT
         draw_v_guide(shed_cx, sy2, py2, front_ft)
+
+        # --- NEW: colored shed→object guides ---
+        if getattr(self, "show_object_distances", True):
+            self._draw_shed_object_distances() 
 
 
     def rotate_shed_by_click(self, _event):
