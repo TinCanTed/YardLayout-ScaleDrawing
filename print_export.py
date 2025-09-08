@@ -178,24 +178,22 @@ def export_to_pdf(layout, filename, **_ignored):
             wx, wy = layout.well.x, yard_height_ft - layout.well.y
             qx, qy, px, py = nearest_rect_point_ft((sL, sT, sR, sB), wx, wy)
             dist = ((qx - px)**2 + (qy - py)**2) ** 0.5
-            draw_obj_distance_line(qx, qy, px, py, PDF["well"], f"Well {dist:.1f} ft")
+            draw_obj_distance_line(qx, qy, px, py, PDF["well"], f"{dist:.1f} ft")
 
         # Shed <-> Septic
         if getattr(layout, "septic", None) and layout.septic.x is not None:
             sx, sy = layout.septic.x, yard_height_ft - layout.septic.y
             qx, qy, px, py = nearest_rect_point_ft((sL, sT, sR, sB), sx, sy)
             dist = ((qx - px)**2 + (qy - py)**2) ** 0.5
-            draw_obj_distance_line(qx, qy, px, py, PDF["septic"], f"Septic {dist:.1f} ft")
+            draw_obj_distance_line(qx, qy, px, py, PDF["septic"], f"{dist:.1f} ft")
 
         # Shed <-> House
         if getattr(layout, "house", None) and layout.house.x is not None:
             hL, hT, hR, hB = rect_ft(layout.house, yard_height_ft)
             ax, ay, bx, by = nearest_rect_rect_ft((sL, sT, sR, sB), (hL, hT, hR, hB))
             dist = ((ax - bx)**2 + (ay - by)**2) ** 0.5
-            draw_obj_distance_line(ax, ay, bx, by, PDF["house"], f"House {dist:.1f} ft")
+            draw_obj_distance_line(ax, ay, bx, by, PDF["house"], f"{dist:.1f} ft")
     
-
-
     # ==== Distance label helpers (NEAREST boundary edges) ====
     # Arrowhead helper
     def draw_arrowhead(x, y, dx, dy, size=6):

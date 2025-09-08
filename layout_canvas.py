@@ -58,9 +58,6 @@ class LayoutCanvas(tk.Frame):
         self.live_guide_updates = False                # OFF by default
         self._guide_redraw_job = None                  # throttle handle
 
-
-
-
         self.draw_grid()
         self.draw_objects()
         self.draw_legend()
@@ -85,7 +82,6 @@ class LayoutCanvas(tk.Frame):
         px_per_ft = float(self.feet_to_pixels(1.0))
         return 0.0 if px_per_ft == 0 else (px / px_per_ft)
     
-
     def draw_grid(self):
         spacing_ft = GRID_SPACING_FT
         total_width_ft = self.layout.front
@@ -100,7 +96,6 @@ class LayoutCanvas(tk.Frame):
             y = self.feet_to_pixels(ft) + MARGIN_PX
             self.canvas.create_line(MARGIN_PX, y, self.canvas_width + MARGIN_PX, y, fill="#eee")
             self.canvas.create_text(MARGIN_PX - 14, y, text=str(ft), anchor="w", fill="#444", font=("Arial", 8))
-
 
         # Draw a visible boundary rectangle for the property
         prop_left_px   = MARGIN_PX
@@ -312,7 +307,7 @@ class LayoutCanvas(tk.Frame):
             wy = self.layout.left - well.y  # point Y in top-based feet
             qx, qy, px, py = self._nearest_rect_point_ft((sL, sT, sR, sB), wx, wy)
             dist = ((qx - px) ** 2 + (qy - py) ** 2) ** 0.5
-            self._draw_obj_distance_line(qx, qy, px, py, col_well, f"Well {dist:.1f} ft")
+            self._draw_obj_distance_line(qx, qy, px, py, col_well, f"{dist:.1f} ft")
 
         # Shed <-> Septic (point)
         septic = getattr(self.layout, "septic", None)
@@ -321,7 +316,7 @@ class LayoutCanvas(tk.Frame):
             sy = self.layout.left - septic.y
             qx, qy, px, py = self._nearest_rect_point_ft((sL, sT, sR, sB), sx, sy)
             dist = ((qx - px) ** 2 + (qy - py) ** 2) ** 0.5
-            self._draw_obj_distance_line(qx, qy, px, py, col_septic, f"Septic {dist:.1f} ft")
+            self._draw_obj_distance_line(qx, qy, px, py, col_septic, f"{dist:.1f} ft")
 
         # Shed <-> House (rect)
         house = getattr(self.layout, "house", None)
@@ -329,7 +324,7 @@ class LayoutCanvas(tk.Frame):
             hL, hT, hR, hB = self._rect_ft(house)
             ax, ay, bx, by = self._nearest_rect_rect_ft((sL, sT, sR, sB), (hL, hT, hR, hB))
             dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
-            self._draw_obj_distance_line(ax, ay, bx, by, col_house, f"House {dist:.1f} ft")
+            self._draw_obj_distance_line(ax, ay, bx, by, col_house, f"{dist:.1f} ft")
 
     # schedule a guides redraw on the next Tk tick (coalesces rapid drags)
     def request_guide_redraw(self):
@@ -348,7 +343,6 @@ class LayoutCanvas(tk.Frame):
                 self.after_cancel(self._guide_redraw_job)
                 self._guide_redraw_job = None
             self._guide_redraw_job = self.after(0, self.redraw_distance_guides)   
-
     def draw_legend(self):
         self.legend.delete("all")
         items = [
@@ -678,7 +672,6 @@ class LayoutCanvas(tk.Frame):
         # --- NEW: colored shed→object guides ---
         if getattr(self, "show_object_distances", True):
             self._draw_shed_object_distances() 
-
 
     def rotate_shed_by_click(self, _event):
         self.rotate_shed(_event)
