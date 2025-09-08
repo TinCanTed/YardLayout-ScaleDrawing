@@ -343,7 +343,6 @@ class LayoutCanvas(tk.Frame):
                 self.after_cancel(self._guide_redraw_job)
                 self._guide_redraw_job = None
             self._guide_redraw_job = self.after(0, self.redraw_distance_guides)   
-    """
     def draw_legend(self):
         self.legend.delete("all")
         items = [
@@ -357,7 +356,7 @@ class LayoutCanvas(tk.Frame):
             self.legend.create_rectangle(10, y, 30, y + 20, fill=color)
             self.legend.create_text(35, y + 10, anchor="w", text=name)
             y += 30
-    """
+
     def on_drag_start(self, event):
         # cancel any pending redraw so we reschedule cleanly on move
         if getattr(self, "_guide_redraw_job", None):
