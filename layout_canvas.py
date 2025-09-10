@@ -7,10 +7,11 @@ and object rotation features.
 """
 
 import tkinter as tk
+import math
 from layout_data import LayoutData, RectangleObject, PointObject
 from file_handler import save_layout_to_file
 from typing import cast, Union
-from typing import Optional
+from typing import Optional, List, Tuple
 from ui_palette import HEX, role_for
 COLOR_DEBUG = False  # turn to false when done testing
 if COLOR_DEBUG:
@@ -212,6 +213,204 @@ class LayoutCanvas(tk.Frame):
  
         # Refresh guides after everything is drawn
         self.redraw_distance_guides()
+
+    # ========= AVOIDANCE (uses your feet_to_pixels + MARGIN_PX + layout.left) =========
+
+    def _canvas_bbox_for_rect(self, obj) -> Optional[Tuple[float,float,float,float]]:
+        """
+        Rectangle bbox in CANVAS coordinates, matching your _draw_rect math.
+        Returns (x0,y0,x1,y1) or None if object not placed.
+        """
+        if obj is None or obj.x is None or obj.y is None or obj.width is None or obj.height is None:
+            return None
+        x1 = self.feet_to_pixels(obj.x) + MARGIN_PX
+        y1 = self.feet_to_pixels(self.layout.left - obj.y - obj.height) + MARGIN_PX
+        x2 = x1 + self.feet_to_pixels(obj.width)
+        y2 = y1 + self.feet_to_pixels(obj.height)
+        x0, y0 = min(x1, x2), min(y1, y2)
+        x1, y1 = max(x1, x2), max(y1, y2)
+        return (x0, y0, x1, y1)
+
+    def _canvas_bbox_for_point(self, obj, r_px: int = 6) -> Optional[Tuple[float,float,float,float]]:
+        """
+        Circle/point bbox in CANVAS coordinates, matching your _draw_point math.
+        """
+        if obj is None or obj.x is None or obj.y is None:
+            return None
+        x = self.feet_to_pixels(obj.x) + MARGIN_PX
+        y = self.feet_to_pixels(self.layout.left - obj.y) + MARGIN_PX
+        return (x - r_px, y - r_px, x + r_px, y + r_px)
+
+    def _inflate(self, bb, pad):
+        x0,y0,x1,y1 = bb
+        return (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
+
+    def _bbox_intersects(self, a, b):
+        return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
+
+    def _collect_avoidance_bboxes(self) -> List[Tuple[float,float,float,float]]:
+        """
+        Areas labels must avoid: house, shed, well, septic, and soft canvas edges.
+        Everything here is computed from your existing layout + draw math.
+        """
+        avoid: List[Tuple[float,float,float,float]] = []
+
+        # Rectangles
+        bb_house = self._canvas_bbox_for_rect(getattr(self.layout, "house", None))
+        if bb_house:
+            avoid.append(bb_house)
+
+        bb_shed  = self._canvas_bbox_for_rect(getattr(self.layout, "shed", None))
+        if bb_shed:
+            avoid.append(bb_shed)
+
+        # Points (as circles)
+        bb_well   = self._canvas_bbox_for_point(getattr(self.layout, "well", None), r_px=6)
+        if bb_well:
+            avoid.append(bb_well)
+
+        bb_septic = self._canvas_bbox_for_point(getattr(self.layout, "septic", None), r_px=6)
+        if bb_septic:
+            avoid.append(bb_septic)
+
+        # Canvas edges to prevent clipping
+        W = int(self.canvas.cget("width"))
+        H = int(self.canvas.cget("height"))
+        margin = 4
+        avoid.append((-margin, -margin, 0, H + margin))          # left gutter
+        avoid.append((W, -margin, W + margin, H + margin))        # right gutter
+        avoid.append((-margin, -margin, W + margin, 0))           # top gutter
+        avoid.append((-margin, H, W + margin, H + margin))        # bottom gutter
+
+        return avoid
+
+    # ========= LABEL GEOMETRY & DRAW =========
+
+    def _segment_midpoint(self, p1, p2):
+        return ((p1[0] + p2[0]) * 0.5, (p1[1] + p2[1]) * 0.5)
+
+    def _unit_perp(self, p1, p2):
+        dx, dy = (p2[0]-p1[0], p2[1]-p1[1])
+        L = math.hypot(dx, dy) or 1.0
+        return (-dy / L, dx / L)
+
+    def _measure_text_bbox(self, text: str, center_xy, pad: int = 4):
+        """
+        Measure a center-anchored text on the Tk canvas and return (padded_box, raw_box).
+        """
+        tx, ty = center_xy
+        temp = self.canvas.create_text(tx, ty, text=text, anchor="center", state="hidden")
+        raw = self.canvas.bbox(temp) or (tx-20, ty-10, tx+20, ty+10)
+        self.canvas.delete(temp)
+        return self._inflate(raw, pad), raw
+
+    def _place_label_for_segment(self, p1, p2, text: str):
+        """
+        Try midpoint. If overlapping any avoidance area or the segment itself,
+        nudge outward in a small spiral. Return a dict with final placement.
+        """
+        mid = self._segment_midpoint(p1, p2)
+        ux, uy = self._unit_perp(p1, p2)
+
+        # Along-segment unit vector
+        dx, dy = (p2[0]-p1[0], p2[1]-p1[1])
+        L = math.hypot(dx, dy) or 1.0
+        vx, vy = (dx / L, dy / L)
+
+        if not hasattr(self, "_placed_label_bboxes"):
+            self._placed_label_bboxes = []
+
+        avoid = self._collect_avoidance_bboxes() + self._placed_label_bboxes
+
+        def hit(candidate_bbox):
+            # against objects/edges
+            if any(self._bbox_intersects(candidate_bbox, bb) for bb in avoid):
+                return True
+            # against the segment’s own tight bbox
+            seg_bb = (min(p1[0], p2[0]) - 2, min(p1[1], p2[1]) - 2,
+                      max(p1[0], p2[0]) + 2, max(p1[1], p2[1]) + 2)
+            return self._bbox_intersects(candidate_bbox, seg_bb)
+
+        # Midpoint first
+        padded, _ = self._measure_text_bbox(text, mid, pad=4)
+        if not hit(padded):
+            self._placed_label_bboxes.append(padded)
+            return {"text": text, "pos": mid, "leader_start": mid, "leader_end": mid, "needs_leader": False}
+
+        # Spiral search
+        step = 6
+        radius = step
+        best = None
+        while radius <= 60:
+            # try around the midpoint, biased to the perpendicular first
+            candidates = [
+                (mid[0] + ux*radius, mid[1] + uy*radius),
+                (mid[0] - ux*radius, mid[1] - uy*radius),
+                (mid[0] + vx*radius, mid[1] + vy*radius),
+                (mid[0] - vx*radius, mid[1] - vy*radius),
+                (mid[0] + (ux+vx)*radius*0.707, mid[1] + (uy+vy)*radius*0.707),
+                (mid[0] + (ux-vx)*radius*0.707, mid[1] + (uy-vy)*radius*0.707),
+                (mid[0] + (-ux+vx)*radius*0.707, mid[1] + (-uy+vy)*radius*0.707),
+                (mid[0] + (-ux-vx)*radius*0.707, mid[1] + (-uy-vy)*radius*0.707),
+            ]
+            for cx, cy in candidates:
+                pb, _ = self._measure_text_bbox(text, (cx, cy), pad=4)
+                if not hit(pb):
+                    best = (cx, cy, pb)
+                    break
+            if best:
+                break
+            radius += step
+
+        if best is None:
+            # No clear spot—fall back to midpoint with a leader stub
+            self._placed_label_bboxes.append(padded)
+            return {"text": text, "pos": mid, "leader_start": mid, "leader_end": mid, "needs_leader": True}
+
+        bx, by, bb = best
+        self._placed_label_bboxes.append(bb)
+
+        # Short leader toward the label, scaled a bit by segment length
+        leader_len = min(18, max(10, int(0.08 * L)))
+        lx, ly = (bx - mid[0], by - mid[1])
+        d = math.hypot(lx, ly) or 1.0
+        sx, sy = (mid[0] + (lx/d) * min(leader_len, d), mid[1] + (ly/d) * min(leader_len, d))
+
+        return {"text": text, "pos": (bx, by), "leader_start": (sx, sy), "leader_end": (bx, by), "needs_leader": True}
+
+    def _draw_label_with_leader(self, placement):
+        # White pad box behind text
+        padded, _ = self._measure_text_bbox(placement["text"], placement["pos"], pad=4)
+        x0,y0,x1,y1 = padded
+        bg = self.canvas.create_rectangle(x0, y0, x1, y1,
+                                          fill="white", outline="#cccccc", tags=("distlabel",))
+        # Leader
+        if placement["needs_leader"]:
+            sx, sy = placement["leader_start"]
+            ex, ey = placement["leader_end"]
+            self.canvas.create_line(sx, sy, ex, ey, width=1, tags=("distlabel",))
+            r = 1.5
+            self.canvas.create_oval(sx-r, sy-r, sx+r, sy+r, fill="black", outline="", tags=("distlabel",))
+        # Text
+        self.canvas.create_text(placement["pos"][0], placement["pos"][1],
+                                text=placement["text"], anchor="center",
+                                tags=("distlabel",),
+                                font=getattr(self, "font_small", None))
+
+    def render_distance_labels(self, segments: List[Tuple[Tuple[float,float], Tuple[float,float], str]]):
+        """
+        PUBLIC: Pass in segments in CANVAS coords: [((x1,y1),(x2,y2), '12.3 ft'), ...]
+        This draws midpoint labels with smart nudge + leader lines.
+        """
+        # Clear previous labels for a clean re-render
+        self.canvas.delete("distlabel")
+        self._placed_label_bboxes = []
+
+        for (p1, p2, text) in segments:
+            placement = self._place_label_for_segment(p1, p2, text)
+            self._draw_label_with_leader(placement)
+    
+
 
     # --- Distance helpers (feet, top-based Y like our canvas drawing) ---
 
@@ -596,82 +795,84 @@ class LayoutCanvas(tk.Frame):
         self.show_distance_guides = bool(on)
         self.redraw_distance_guides()
 
-    def redraw_distance_guides(self) -> None:
-        """Draw light dashed lines + ft labels from shed to property edges."""
-        # Clear previous guides
-        self.canvas.delete("distance_guide")
-        self.canvas.delete("guide_objdist")
 
-        if not getattr(self, "show_distance_guides", False):
+    def redraw_distance_guides(self):
+        # 0) Clean slate for guides + labels
+        self.canvas.delete("distguide")
+        self.canvas.delete("distlabel")
+
+        # 1) Collect segments here; each: ((x1,y1),(x2,y2),"##.# ft")
+        segments = []
+
+        # --- helpers (local to this method) ---
+        def center_of_bbox(bb):
+            return ((bb[0] + bb[2]) * 0.5, (bb[1] + bb[3]) * 0.5)
+
+        def add_segment(p1, p2):
+            # draw guide line
+            self.canvas.create_line(p1[0], p1[1], p2[0], p2[1], tags=("distguide",), width=1)
+            # label in feet
+            px_per_ft = self.feet_to_pixels(1.0)
+            d_feet = math.hypot(p2[0]-p1[0], p2[1]-p1[1]) / px_per_ft
+            segments.append((p1, p2, f"{d_feet:.1f} ft"))
+
+        # 2) Get canvas-space bboxes for objects (uses the helpers you added)
+        bb_shed   = self._canvas_bbox_for_rect(getattr(self.layout, "shed", None))
+        bb_house  = self._canvas_bbox_for_rect(getattr(self.layout, "house", None))
+        bb_well   = self._canvas_bbox_for_point(getattr(self.layout, "well", None), r_px=6)
+        bb_septic = self._canvas_bbox_for_point(getattr(self.layout, "septic", None), r_px=6)
+
+        if not bb_shed:
+            # No shed placed → nothing to measure from
+            self.render_distance_labels(segments)
             return
 
-        # Need the shed and the property bounds (in pixels) to place the lines
-        # Use shed RECTANGLE bbox only (exclude rotate glyph / labels)
-        shed_bb = self._shed_body_bbox_px() or self._find_bbox_px("shed")
-        if not shed_bb:
-            return
-        sx1, sy1, sx2, sy2 = shed_bb
-        shed_cx = (sx1 + sx2) / 2
-        shed_cy = (sy1 + sy2) / 2
+        # 3) Shed center (anchor for all distances)
+        shed_c = center_of_bbox(bb_shed)
 
-        prop_bb = self._find_bbox_px(["property", "boundary"]) or self._property_bbox_from_layout()
-        px1, py1, px2, py2 = prop_bb
+        # 4) Object-to-object distances from Shed
+        if bb_well:
+            add_segment(shed_c, center_of_bbox(bb_well))
 
-        # Exact distances in FEET for labels
-        if self.live_guide_updates:
-            # derive from current pixel geometry (top=back, bottom=front)
-            left_ft  = self._feet(max(0, sx1 - px1))
-            right_ft = self._feet(max(0, px2 - sx2))
-            back_ft  = self._feet(max(0, sy1 - py1))   # top segment
-            front_ft = self._feet(max(0, py2 - sy2))   # bottom segment
-        else:
-            d = self._shed_distances_ft()
-            if not d:
-                return
-            left_ft, right_ft, front_ft, back_ft = d
+        if bb_septic:
+            add_segment(shed_c, center_of_bbox(bb_septic))
 
-        # Helpers: draw lines in px; label with ft
-        def draw_h_guide(x_start, x_end, y, dist_ft: float):
-            line_id = self.canvas.create_line(
-                x_start, y, x_end, y, dash=(4, 3), width=1, fill="#BFBFBF",
-                tags=("distance_guide",)
-            )
-            self.canvas.tag_lower(line_id)
-            if dist_ft > 0:
-                midx = (x_start + x_end) / 2
-                self.canvas.create_text(
-                    midx, y - 8, text=f"{dist_ft:.1f} ft",
-                    font=("TkDefaultFont", 8), fill="#666666", anchor="s",
-                    tags=("distance_guide",)
-                )
+        if bb_house:
+            add_segment(shed_c, center_of_bbox(bb_house))
 
-        def draw_v_guide(x, y_start, y_end, dist_ft: float):
-            line_id = self.canvas.create_line(
-                x, y_start, x, y_end, dash=(4, 3), width=1, fill="#BFBFBF",
-                tags=("distance_guide",)
-            )
-            self.canvas.tag_lower(line_id)
-            if dist_ft > 0:
-                midy = (y_start + y_end) / 2
-                self.canvas.create_text(
-                    x + 8, midy, text=f"{dist_ft:.1f} ft",
-                    font=("TkDefaultFont", 8), fill="#666666", anchor="w",
-                    tags=("distance_guide",)
-                )
+        # 5) Property line distances from Shed
+        #    Coordinate system matches your draw math:
+        #    - X in canvas:  x_px = feet_to_pixels(x_ft) + MARGIN_PX
+        #    - Y in canvas:  y_px = feet_to_pixels(layout.left - y_ft) + MARGIN_PX
+        #    Yard extents in FEET assumed to be:
+        #       x ∈ [0, layout.right]   (Left .. Right)
+        #       y ∈ [0, layout.left]    (Front .. Back)  ← matches your existing y conversion
+        #
+        #    Left/Right lines are vertical; Front/Back are horizontal.
 
-        # Horizontal guides: left / right (unchanged)
-        draw_h_guide(px1, sx1, shed_cy, left_ft)
-        draw_h_guide(sx2, px2, shed_cy, right_ft)
+        # Left property line (x = 0 ft)
+        left_x = MARGIN_PX
+        add_segment(shed_c, (left_x, shed_c[1]))
 
-        # Vertical guides: SWAP which labels go top vs bottom
-        # Top segment (py1..sy1) should show BACK
-        draw_v_guide(shed_cx, py1, sy1, back_ft)
-        # Bottom segment (sy2..py2) should show FRONT
-        draw_v_guide(shed_cx, sy2, py2, front_ft)
+        # Right property line (x = layout.right ft) — guard if attribute exists
+        if hasattr(self.layout, "right") and self.layout.right is not None:
+            right_x = self.feet_to_pixels(self.layout.right) + MARGIN_PX
+            add_segment(shed_c, (right_x, shed_c[1]))
 
-        # --- NEW: colored shed→object guides ---
-        if getattr(self, "show_object_distances", True):
-            self._draw_shed_object_distances() 
+        # Back property line (y = layout.left ft) → top edge on canvas
+        back_y = MARGIN_PX
+        add_segment(shed_c, (shed_c[0], back_y))
+
+        # Front property line (y = 0 ft) → bottom edge on canvas
+        front_y = self.feet_to_pixels(getattr(self.layout, "left", 0.0)) + MARGIN_PX
+        add_segment(shed_c, (shed_c[0], front_y))
+
+        # 6) (Optional) Keep your existing shed-specific colored guides if desired
+        # self._draw_shed_object_distances()
+
+        # 7) Render smart labels (midpoint-first, nudge-on-overlap, leader lines)
+        self.render_distance_labels(segments)
+
 
     def rotate_shed_by_click(self, _event):
         self.rotate_shed(_event)
